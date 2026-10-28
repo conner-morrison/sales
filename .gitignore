@@ -1,0 +1,8 @@
+# Credentials and machine-specific sync scripts
+.sync_token
+sync.ps1
+origin_sync.ps1
+
+# Logs and build archives
+*.log
+*.7z

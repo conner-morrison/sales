@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg:#fff; --ink:#14161a; --muted:#6b7280; --line:#e4e7ec;
+    --accent:#0a66c2; --yes:#0a7c3f; --no:#8a1c1c; --warn:#8a5a00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#1c1f26; --ink:#e8eaed; --muted:#9aa2ae; --line:#2b2f38;
+            --accent:#6bb2f5; --yes:#5fd08a; --no:#f08a8a; --warn:#e8c17a; }
+  }
+  * { box-sizing:border-box; }
+  body { width:280px; margin:0; padding:10px; background:var(--bg); color:var(--ink);
+         font:12px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  /* Every row centres its contents. .row had no align-items at all, so a bold number
+     sat against a lighter label of a different size and the two never shared a line. */
+  .row { display:flex; justify-content:space-between; align-items:center;
+         gap:8px; padding:1px 0; min-height:18px; }
+  .row span:last-child { font-variant-numeric:tabular-nums; font-weight:600; }
+  .muted { color:var(--muted); font-weight:400; }
+  hr { border:0; border-top:1px solid var(--line); margin:7px 0; }
+  button { width:100%; font:inherit; font-weight:600; min-height:28px; padding:4px 6px;
+           display:inline-flex; align-items:center; justify-content:center;
+           border-radius:5px;
+           border:1px solid var(--accent); background:var(--accent); color:#fff;
+           cursor:pointer; margin-top:4px; }
+  .btns { display:flex; gap:6px; }
+  .btns button { margin-top:4px; }
+  button.ghost { background:transparent; color:var(--ink); border-color:var(--line); }
+  button.pause { background:transparent; color:var(--warn); border-color:var(--warn); }
+  button.stop { background:transparent; color:var(--no); border-color:var(--no); }
+  button.danger { background:transparent; color:var(--no); border-color:var(--line);
+                  font-weight:500; font-size:11px; padding:4px; }
+  button.danger.arm { border-color:var(--no); font-weight:600; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  .dot { width:7px; height:7px; border-radius:50%; background:var(--muted); flex:0 0 auto; }
+  .dot.on { background:var(--yes); } .dot.bad { background:var(--no); }
+  .conn { display:flex; align-items:center; gap:5px; padding:1px 0; min-height:18px; }
+  .conn .lbl { flex:1; }
+  .conn .val { font-size:11px; color:var(--muted); text-align:right;
+               overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:170px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:0 10px; }
+  .verdicts { display:flex; justify-content:space-between; align-items:center;
+              min-height:18px; font-variant-numeric:tabular-nums; }
+  .yes { color:var(--yes); } .no { color:var(--no); }
+  .err { color:var(--warn); font-size:11px; margin-top:6px; word-break:break-word; }
+  .dot.wait { background:var(--warn); }
+  .ftitle { font-size:11px; color:var(--muted); margin:4px 0 1px; }
+  .checks { display:flex; flex-wrap:wrap; gap:2px 10px; }
+  .checks label { display:inline-flex; align-items:center; gap:3px; cursor:pointer;
+                  white-space:nowrap; }
+  .checks input { margin:0; }
+  .sub { padding-left:16px; }
+  #fYears { width:46px; font:inherit; padding:1px 4px; border-radius:4px;
+            border:1px solid var(--line); background:var(--bg); color:var(--ink); }
+  .field { width:100%; font:inherit; padding:3px 5px; margin-top:2px; border-radius:4px;
+           border:1px solid var(--line); background:var(--bg); color:var(--ink); }
+  .field:disabled { opacity:.6; }
+  .warn { color:var(--no); font-weight:600; font-size:11px; margin-top:6px;
+          padding:5px 6px; border:1px solid var(--no); border-radius:5px; }
+</style>
+</head>
+<body>
+  <div class="conn">
+    <span class="dot" id="runDot"></span>
+    <span class="lbl muted" id="phase">Idle</span>
+    <span class="val" id="session"></span>
+  </div>
+
+  <hr>
+  <div class="grid">
+    <div class="row"><span class="muted">Captured</span><span id="captured">–</span></div>
+    <div class="row"><span class="muted">Waiting</span><span id="waiting">–</span></div>
+    <div class="row"><span class="muted">Enriched</span><span id="enriched">–</span></div>
+    <div class="row"><span class="muted">Failed</span><span id="failed">–</span></div>
+  </div>
+  <hr>
+  <div class="verdicts">
+    <span class="yes">YES <b id="yes">–</b></span>
+    <span class="no">NO <b id="no">–</b></span>
+  </div>
+  <!-- Cards the rules could reject without opening a lead page. This is the whole
+       point of the card screen, so it is worth seeing what it saved. -->
+  <div class="row"><span class="muted">Skipped on card</span>
+    <span id="skipped" class="muted">–</span></div>
+
+  <hr>
+  <!-- What a lead page must show to qualify. Saved as it is changed, and read for every
+       profile, so a change applies from the next one on. -->
+  <div class="row"><span class="muted">Min. experience</span>
+    <span><input id="fYears" type="number" min="0" max="50" step="1"> yrs</span></div>
+  <div class="ftitle">Tech stack (any ticked)</div>
+  <div class="checks">
+    <label><input type="checkbox" id="fAI"> AI</label>
+    <label><input type="checkbox" id="fFull"> Full-stack</label>
+    <label><input type="checkbox" id="fData"> Data</label>
+  </div>
+  <div class="ftitle">Must also include</div>
+  <div class="checks">
+    <label><input type="checkbox" id="fSpeak"> Speaking</label>
+    <label><input type="checkbox" id="fCompany"> Big company</label>
+    <label><input type="checkbox" id="fUni"> Big university</label>
+    <label><input type="checkbox" id="fDeg"> Degrees</label>
+  </div>
+  <div class="checks sub" id="degBox" hidden>
+    <label><input type="checkbox" id="fBS"> BS</label>
+    <label><input type="checkbox" id="fMS"> MS</label>
+    <label><input type="checkbox" id="fPhD"> PhD</label>
+    <label><input type="checkbox" id="fMBA"> MBA</label>
+  </div>
+
+  <!-- Start alone when idle; Pause/Resume beside Stop while a run is alive, so
+       suspending and ending are never the same click. -->
+  <div class="btns">
+    <button id="runBtn">Start</button>
+    <button id="stopBtn" class="stop" hidden>Stop</button>
+  </div>
+  <div class="btns">
+    <button id="dlBtn" class="ghost" disabled title="Leads found since the last download, without repeats">Download .txt</button>
+    <button id="sendBtn" class="ghost" title="Send each qualified lead's first name and URL to the relay server as soon as it is found">Send to server</button>
+  </div>
+  <div class="btns">
+    <button id="logBtn" class="ghost" disabled title="The last 50 profiles seen: URL, what was read, and why YES or NO">Download log.txt</button>
+    <button id="histBtn" class="ghost" title="Every lead ever qualified, across all runs">Download history.txt</button>
+  </div>
+  <hr>
+  <!-- Which copy this is. Sent with the registration, so it is fixed once registered:
+       Forget, then Register again, to change it on the server. -->
+  <div class="ftitle">Extension name</div>
+  <input id="nameIn" class="field" type="text" maxlength="60" placeholder="LinkedIn Harvester">
+  <!-- The relay: registered or not, and which channel it sends to. Sending needs both. -->
+  <div class="conn">
+    <span class="dot" id="relayDot"></span>
+    <span class="lbl muted">Server</span>
+    <span class="val" id="relayState">Not registered</span>
+  </div>
+  <div class="btns">
+    <button id="regBtn" class="ghost">Register</button>
+    <button id="relayResetBtn" class="danger" hidden title="Forget this registration on this side">Forget</button>
+  </div>
+  <div class="warn" id="warn" hidden></div>
+  <hr>
+  <!-- The user's own bot, told when a run finishes the whole search. Empty = no message. -->
+  <div class="ftitle">Telegram bot token</div>
+  <input id="tgToken" class="field" type="password" autocomplete="off" placeholder="123456:ABC...">
+  <div class="ftitle">Telegram chat ID</div>
+  <input id="tgChat" class="field" type="text" autocomplete="off" placeholder="123456789">
+  <button id="tgTestBtn" class="ghost">Send test message</button>
+  <button id="clearBtn" class="danger" title="Discards this run's results. Nothing is kept between runs anyway.">Clear results</button>
+  <div class="err" id="err"></div>
+  <div class="conn" style="margin-top:6px">
+    <span class="lbl muted" style="font-size:10px" id="ver"></span>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
