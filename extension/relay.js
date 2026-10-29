@@ -127,6 +127,7 @@ export async function register() {
 export async function resetRelay() {
   await chrome.storage.local.set({ [KEY]: { ...EMPTY } });
   await chrome.alarms.clear(ALARM);
+  await chrome.alarms.clear(HEARTBEAT);
   return { ok: true, relay: { ...EMPTY } };
 }
 
@@ -159,6 +160,7 @@ export async function pollApproval() {
       const status = String(d.status || "").toLowerCase();
       if (d.worker_id) {
         await putRelay({ status: "approved", workerId: d.worker_id, error: null });
+        await armHeartbeat();
         notify("Relay: registered",
                "The server approved this extension. Waiting for a channel to be allocated.");
         listenForChannel();
@@ -248,6 +250,67 @@ export async function listenForChannel() {
   }
 }
 
+// --- staying online ----------------------------------------------------------------
+//
+// The server has no connection to watch: it calls a worker online when it has heard
+// from it in the last 75 seconds (RELAY_ONLINE_WINDOW). Once a channel was allocated
+// nothing above asks the server anything, so between leads the console showed this
+// extension offline -- however long Chrome had been open. A check-in every 30 seconds
+// keeps it inside that window with room for one to be missed.
+//
+// The alarm is what wakes an idle MV3 worker to do it. Unpacked extensions are not held
+// to the one-minute alarm minimum; a packed one on Chrome 120+ allows 30 seconds too.
+
+const HEARTBEAT = "relay-heartbeat";
+const HEARTBEAT_MIN = 0.5;
+
+async function armHeartbeat() {
+  if (!(await chrome.alarms.get(HEARTBEAT))) {
+    chrome.alarms.create(HEARTBEAT, { periodInMinutes: HEARTBEAT_MIN });
+  }
+}
+
+/**
+ * One short ask of /messages: being heard from is the point. What it brings back is
+ * dealt with as the channel wait deals with it -- messages acknowledged, and a notice of
+ * joining or leaving a channel taken up, so a removal is noticed now rather than at the
+ * next lead.
+ */
+export async function heartbeat() {
+  const r = await getRelay();
+  if (r.status !== "approved" || !r.workerId) {
+    await chrome.alarms.clear(HEARTBEAT);
+    return;
+  }
+  if (listening) return;                          // the channel wait is checking in already
+
+  const res = await call("GET", "/messages", { token: r.workerId });
+  if (res.status === 401) {
+    await chrome.alarms.clear(HEARTBEAT);
+    await chrome.alarms.clear(ALARM);
+    await putRelay({ ...EMPTY, error: "the server no longer accepts this extension's id - register again" });
+    return;
+  }
+  if (res.error) return;                          // offline for now; the next beat tries again
+
+  for (const m of res.data?.messages || []) {
+    if (m && typeof m.channel === "string" && Number.isInteger(m.seq)) {
+      await call("POST", "/ack", { token: r.workerId, body: { channel: m.channel, seq: m.seq } });
+    }
+  }
+
+  const channel = channelAfter(res.data?.notices, r.channel);
+  if (channel === r.channel) return;
+  await putRelay({ channel });
+  if (channel) {
+    notify("Relay: channel allocated", `This extension now sends to "${channel}".`);
+  } else {
+    notify("Relay: channel removed", `This extension was taken out of "${r.channel}".`);
+    chrome.alarms.create(ALARM, { periodInMinutes: 1 });
+    listenForChannel();
+  }
+}
+
 // --- sending ----------------------------------------------------------------------
 
 /**
@@ -306,6 +369,23 @@ export async function sendLead(lead) {
   // 409: the same id again -- the relay already has this person.
   if (res.error && res.status !== 409) return { ok: false, error: res.error };
   if (r.error) await putRelay({ error: null });     // whatever went wrong before, this went
+
+  // Accepted is not the same as posted. The server answers success without storing a
+  // new message when the URL is muted, or when a message with this id already exists
+  // anywhere in the workspace -- sent before, by any worker, to any channel -- and
+  // nothing then appears in this channel. Retrying cannot change either answer, so the
+  // lead counts as handled, but `note` says it was not posted.
+  const who = firstName(lead.name) || url;
+  const d = res.data || {};
+  if (d.muted) {
+    return { ok: true, channel: r.channel,
+             note: `${who} was not posted: that URL is muted on the server` };
+  }
+  if (d.duplicate) {
+    return { ok: true, channel: r.channel,
+             note: `${who} was not posted: the server already has this URL` +
+                   (d.seq != null ? ` (message #${d.seq})` : "") + ", from an earlier send" };
+  }
   return { ok: true, channel: r.channel };
 }
 
@@ -407,9 +487,14 @@ export async function setAuto(on) {
 export async function resumeRelay() {
   const r = await getRelay();
   if (r.status === "pending") pollApproval();
-  else if (r.status === "approved" && !r.channel) listenForChannel();
+  else if (r.status === "approved") {
+    await armHeartbeat();
+    heartbeat();
+    if (!r.channel) listenForChannel();
+  }
 }
 
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === ALARM) resumeRelay();
+  else if (a.name === HEARTBEAT) heartbeat();
 });

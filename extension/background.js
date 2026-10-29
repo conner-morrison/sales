@@ -736,6 +736,10 @@ async function flushLeads() {
           await relay.markSent(lead.url);
           await relay.removeFromOutbox(lead.url);
           await history.markSentInHistory(lead.url);
+          if (r.note) {
+            results.noteEvent(r.note);
+            await relay.noteError(r.note);     // shown in the popup until a lead really posts
+          }
           continue;
         }
         if (r.warning) await relay.setAuto(false);
