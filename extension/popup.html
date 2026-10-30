@@ -52,7 +52,10 @@
   .checks label { display:inline-flex; align-items:center; gap:3px; cursor:pointer;
                   white-space:nowrap; }
   .checks input { margin:0; }
-  .sub { padding-left:16px; }
+  .gtitle { display:flex; align-items:center; gap:8px; }
+  .gtitle label { display:inline-flex; align-items:center; gap:3px; cursor:pointer;
+                  font-weight:600; color:var(--ink); }
+  .gtitle input { margin:0; }
   #fYears { width:46px; font:inherit; padding:1px 4px; border-radius:4px;
             border:1px solid var(--line); background:var(--bg); color:var(--ink); }
   .field { width:100%; font:inherit; padding:3px 5px; margin-top:2px; border-radius:4px;
@@ -91,20 +94,28 @@
        profile, so a change applies from the next one on. -->
   <div class="row"><span class="muted">Min. experience</span>
     <span><input id="fYears" type="number" min="0" max="50" step="1"> yrs</span></div>
-  <div class="ftitle">Tech stack (any ticked)</div>
+  <!-- Each group passes on any one ticked box, or on every one with its AND ticked.
+       Every group with something ticked must pass. -->
+  <div class="ftitle gtitle">Tech stack
+    <label title="Every ticked box in this group must match"><input type="checkbox" id="aStack"> AND</label>
+    <span id="mStack"></span></div>
   <div class="checks">
     <label><input type="checkbox" id="fAI"> AI</label>
     <label><input type="checkbox" id="fFull"> Full-stack</label>
     <label><input type="checkbox" id="fData"> Data</label>
   </div>
-  <div class="ftitle">Must also include</div>
+  <div class="ftitle gtitle">Background
+    <label title="Every ticked box in this group must match"><input type="checkbox" id="aBack"> AND</label>
+    <span id="mBack"></span></div>
   <div class="checks">
     <label><input type="checkbox" id="fSpeak"> Speaking</label>
     <label><input type="checkbox" id="fCompany"> Big company</label>
     <label><input type="checkbox" id="fUni"> Big university</label>
-    <label><input type="checkbox" id="fDeg"> Degrees</label>
   </div>
-  <div class="checks sub" id="degBox" hidden>
+  <div class="ftitle gtitle">Degree
+    <label title="Every ticked box in this group must match"><input type="checkbox" id="aDeg"> AND</label>
+    <span id="mDeg"></span></div>
+  <div class="checks">
     <label><input type="checkbox" id="fBS"> BS</label>
     <label><input type="checkbox" id="fMS"> MS</label>
     <label><input type="checkbox" id="fPhD"> PhD</label>

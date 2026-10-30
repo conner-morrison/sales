@@ -74,8 +74,10 @@ async function rules() {
 }
 
 /**
- * The popup's filters: minimum years, tech-stack packs, and the favourite checks.
- * Read for every lead, so a change in the popup applies from the next profile on.
+ * The popup's filters: minimum years, and three groups of checks -- tech stack,
+ * background, degrees. `all` holds each group's AND box: off, any one ticked check in
+ * the group is enough. Read for every lead, so a change in the popup applies from the
+ * next profile on.
  */
 const DEFAULT_FILTERS = {
   min_years: 10,
@@ -83,16 +85,22 @@ const DEFAULT_FILTERS = {
   speaking: false,
   big_company: false,
   big_university: false,
-  degrees: { on: false, bs: false, ms: false, phd: false, mba: false },
+  degrees: { bs: false, ms: false, phd: false, mba: false },
+  all: { stacks: false, background: false, degrees: false },
 };
 
 async function filters() {
   const { filters: f } = await chrome.storage.local.get("filters");
   const s = f || {};
+  // Degrees used to sit behind an on/off box that hid the ticks without clearing them.
+  // A setting saved with that box off asked for no degree, whatever was ticked under it.
+  const degrees = s.degrees && s.degrees.on === false ? {} : s.degrees || {};
+  const { on, ...ticked } = degrees;
   return {
     ...DEFAULT_FILTERS, ...s,
     stacks: { ...DEFAULT_FILTERS.stacks, ...(s.stacks || {}) },
-    degrees: { ...DEFAULT_FILTERS.degrees, ...(s.degrees || {}) },
+    degrees: { ...DEFAULT_FILTERS.degrees, ...ticked },
+    all: { ...DEFAULT_FILTERS.all, ...(s.all || {}) },
   };
 }
 

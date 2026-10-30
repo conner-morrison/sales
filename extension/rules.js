@@ -66,39 +66,55 @@ export const DEFAULT_RULES = {
    */
   exclude_anywhere: ["cybersecurity", "cyber security", "cyber-security"],
 
-  /** Tech-stack packs, one per checkbox. A ticked pack passes on any one of its terms. */
+  /**
+   * Tech-stack packs, one per checkbox. A pack passes on `stack_min_terms` different
+   * terms, one unless set there. An entry that is an array is one term spelled several
+   * ways: "AI" and "artificial intelligence" are not two pieces of evidence.
+   */
   stacks: {
+    // No "transformers", "rag", "gpt" or "embeddings": each is as often something else
+    // -- power transformers, RAG status reports, partition tables, word embeddings in a
+    // linguistics thesis -- and one stray word was enough to pass.
     ai: [
-      "artificial intelligence", "ai", "machine learning", "ml", "deep learning",
-      "llm", "llms", "large language model", "large language models", "generative ai",
-      "genai", "gen ai", "nlp", "natural language processing", "computer vision",
-      "neural network", "neural networks", "pytorch", "tensorflow", "keras",
-      "hugging face", "huggingface", "transformers", "langchain", "llamaindex",
-      "openai", "gpt", "chatgpt", "rag", "retrieval augmented generation",
-      "prompt engineering", "mlops", "reinforcement learning", "scikit-learn",
-      "sklearn", "ai engineer", "ml engineer", "vector database", "embeddings",
-      "fine-tuning", "fine tuning", "stable diffusion", "agentic", "ai agents",
+      ["artificial intelligence", "ai"], ["machine learning", "ml"], "deep learning",
+      ["llm", "llms", "large language model", "large language models"],
+      ["generative ai", "genai", "gen ai"], ["nlp", "natural language processing"],
+      "computer vision", ["neural network", "neural networks"], "pytorch", "tensorflow",
+      "keras", ["hugging face", "huggingface"], "langchain", "llamaindex", "openai",
+      "chatgpt", "retrieval augmented generation", "prompt engineering", "mlops",
+      "reinforcement learning", ["scikit-learn", "sklearn"], "ai engineer",
+      "ml engineer", "vector database", ["fine-tuning", "fine tuning"],
+      "stable diffusion", "agentic", "ai agents",
     ],
+    // No bare "react": in a profile it is as often the verb -- "react to incidents" --
+    // as the library, which is named here by its other spellings.
     fullstack: [
-      "full stack", "full-stack", "fullstack", "front end", "front-end", "frontend",
-      "back end", "back-end", "backend", "react", "react.js", "reactjs", "next.js",
-      "nextjs", "angular", "angularjs", "vue", "vue.js", "vuejs", "nuxt", "svelte",
-      "javascript", "typescript", "node.js", "nodejs", "express.js", "expressjs",
+      ["full stack", "full-stack", "fullstack"], ["front end", "front-end", "frontend"],
+      ["back end", "back-end", "backend"], ["react.js", "reactjs"], ["next.js", "nextjs"],
+      ["angular", "angularjs"], ["vue", "vue.js", "vuejs"], "nuxt", "svelte",
+      "javascript", "typescript", ["node.js", "nodejs"], ["express.js", "expressjs"],
       "nestjs", "django", "flask", "fastapi", "ruby on rails", "laravel", "php",
-      "spring boot", "asp.net", ".net", "graphql", "rest api", "restful", "html",
-      "css", "tailwind", "mongodb", "postgresql", "mysql", "web developer",
-      "web development", "web applications", "mern", "mean stack", "redux",
+      "spring boot", ["asp.net", ".net"], "graphql", ["rest api", "restful"], "html",
+      "css", "tailwind", "mongodb", "postgresql", "mysql",
+      ["web developer", "web development", "web applications"], "mern", "mean stack",
+      "redux",
     ],
+    // No bare "analytics": marketing, web and people analytics are not data work.
     data: [
-      "data engineer", "data engineering", "data scientist", "data science",
-      "data analyst", "data analytics", "analytics", "big data", "etl", "elt",
-      "data pipeline", "data pipelines", "data warehouse", "data warehousing",
-      "data lake", "lakehouse", "data modeling", "spark", "pyspark", "apache spark",
+      ["data engineer", "data engineering"], ["data scientist", "data science"],
+      ["data analyst", "data analytics"], "big data", ["etl", "elt"],
+      ["data pipeline", "data pipelines"], ["data warehouse", "data warehousing"],
+      "data lake", "lakehouse", "data modeling", ["spark", "pyspark", "apache spark"],
       "hadoop", "kafka", "airflow", "dbt", "snowflake", "databricks", "bigquery",
       "redshift", "sql", "tableau", "power bi", "looker", "pandas", "numpy",
-      "statistics", "business intelligence", "bi developer", "data platform",
+      "statistics", ["business intelligence", "bi developer"], "data platform",
     ],
   },
+
+  /** Different terms a pack needs to pass. Each of these words turns up as a passing
+   *  mention -- a course, one old project, a skills list padded out -- so one says
+   *  little; two different ones say the person works with it. */
+  stack_min_terms: { ai: 2, fullstack: 2, data: 2 },
 
   /** "Speaking": people whose work involves talking to an audience. */
   speaking: [

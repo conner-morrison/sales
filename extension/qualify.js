@@ -102,11 +102,46 @@ export function experienceMonths(prospect, today = new Date()) {
  */
 export function matches(text, keywords) {
   for (const kw of keywords || []) {
-    const escaped = String(kw).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const pattern = "(?<![a-z0-9])" + escaped.replace(/ /g, "\\s+") + "(?![a-z0-9])";
-    if (new RegExp(pattern).test(text)) return kw;
+    if (new RegExp(termPattern(kw)).test(text)) return kw;
   }
   return null;
+}
+
+function termPattern(kw) {
+  const escaped = String(kw).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return "(?<![a-z0-9])" + escaped.replace(/ /g, "\\s+") + "(?![a-z0-9])";
+}
+
+/** A pack's entries as terms, each a list of its spellings. */
+function termsOf(pack) {
+  return (pack || []).map((e) => (Array.isArray(e) ? e : [e]));
+}
+
+/** Every spelling in a pack, for checks that only ask whether any of them is there. */
+export function spellings(pack) {
+  return termsOf(pack).flat();
+}
+
+/**
+ * The different terms of `pack` that `text` names, each as the spelling found.
+ *
+ * Longest spellings first, and each match is blanked once counted, so "generative ai"
+ * is one term rather than two with the "ai" inside it. An "AI" elsewhere in the text is
+ * still there to count -- though, being a spelling of a term already found, as nothing.
+ */
+export function distinctTerms(text, pack) {
+  const all = termsOf(pack)
+    .flatMap((term, i) => term.map((s) => [String(s), i]))
+    .sort((a, b) => b[0].length - a[0].length);
+  let rest = text;
+  const found = new Map();
+  for (const [s, i] of all) {
+    const re = new RegExp(termPattern(s), "g");
+    if (!re.test(rest)) continue;
+    if (!found.has(i)) found.set(i, s);
+    rest = rest.replace(re, " ");
+  }
+  return [...found.values()];
 }
 
 /** Half-to-even, matching the original scorer this threshold was carried over from. */
@@ -168,7 +203,7 @@ export function softwareRole(title, rules, profile = null) {
   if (matches(t, rules.software_context)) return broad;
   if (matches(profile, rules.software_profile_terms)) return broad;
   for (const pack of Object.values(rules.stacks || {})) {
-    if (matches(profile, pack)) return broad;
+    if (matches(profile, spellings(pack))) return broad;
   }
   return null;
 }
@@ -194,19 +229,16 @@ function educationOf(p) {
   return Array.isArray(e) ? e : [];
 }
 
-/** The first of the wanted degrees any education entry shows, or null. */
-function degreeFound(p, wanted, rules) {
+/** The term by which any education entry shows this kind of degree, or null. */
+function degreeFound(p, kind, rules) {
   const mbaWords = /master of business administration|\bm\.?b\.?a\b|\bemba\b/gi;
   for (const entry of educationOf(p)) {
     const text = clean([entry.school, entry.degree, entry.detail].filter(Boolean).join(" "));
-    for (const kind of wanted) {
-      const terms = rules.degrees[kind] || [];
-      // An MBA is a master's too, but it is asked for separately: do not let it pass
-      // for an MS.
-      const seen = kind === "ms" ? text.replace(mbaWords, " ") : text;
-      const kw = matches(seen, terms);
-      if (kw) return { kind, kw };
-    }
+    // An MBA is a master's too, but it is asked for separately: do not let it pass for
+    // an MS.
+    const seen = kind === "ms" ? text.replace(mbaWords, " ") : text;
+    const kw = matches(seen, rules.degrees[kind] || []);
+    if (kw) return kw;
   }
   return null;
 }
@@ -257,59 +289,73 @@ export function classify(prospect, rules, filters = {}, today = new Date()) {
     passed.push(`${(months / 12).toFixed(1)} years`);
   }
 
-  // Ticked packs: any one of them is enough.
-  const stacks = Object.keys(STACK_NAMES).filter((k) => f.stacks && f.stacks[k]);
-  if (stacks.length) {
-    let hit = null;
-    for (const k of stacks) {
-      const kw = matches(text, q.stacks[k]);
-      if (kw) { hit = `${STACK_NAMES[k]}: ${repr(kw)}`; break; }
+  // Three groups of ticked checks. Inside a group any one passing is enough, unless the
+  // group's AND is ticked; the groups themselves must all pass. A group with nothing
+  // ticked is not asked.
+  const all = f.all || {};
+  const groups = [
+    [stackChecks(text, q, f), all.stacks, "no_tech_stack"],
+    [backgroundChecks(prospect, text, q, f), all.background, "no_background"],
+    [degreeChecks(prospect, q, f), all.degrees, "no_degree"],
+  ];
+  for (const [checks, every, code] of groups) {
+    if (!checks.length) continue;
+    const misses = checks.filter((c) => !c.hit);
+    const hits = checks.filter((c) => c.hit);
+    if (every ? misses.length : !hits.length) {
+      return verdict(false, misses.map((c) => c.miss).join("; "), code);
     }
-    if (!hit) {
-      return verdict(false,
-        `No ${stacks.map((k) => STACK_NAMES[k]).join(" / ")} terms in the profile`,
-        "no_tech_stack");
-    }
-    passed.push(hit);
+    passed.push(hits.map((c) => c.hit).join(", "));
   }
 
+  return verdict(true, passed.join("; "));
+}
+
+// Each of these returns one {hit, miss} per ticked box: `hit` names what was found, or
+// is null, and `miss` says what was missing.
+
+function stackChecks(text, q, f) {
+  return Object.keys(STACK_NAMES).filter((k) => f.stacks && f.stacks[k]).map((k) => {
+    const name = STACK_NAMES[k];
+    const need = (q.stack_min_terms || {})[k] || 1;
+    const found = distinctTerms(text, q.stacks[k]);
+    const list = found.map(repr).join(", ");
+    if (found.length >= need) return { hit: `${name}: ${list}` };
+    return { hit: null, miss: found.length
+      ? `${name}: only ${list}, ${need} different terms needed`
+      : `No ${name} terms in the profile` };
+  });
+}
+
+function backgroundChecks(prospect, text, q, f) {
+  const checks = [];
   if (f.speaking) {
     const kw = matches(text, q.speaking);
-    if (!kw) return verdict(false, "Nothing about speaking, teaching or mentoring", "no_speaking");
-    passed.push(`speaking: ${repr(kw)}`);
+    checks.push({ hit: kw && `speaking: ${repr(kw)}`,
+                  miss: "Nothing about speaking, teaching or mentoring" });
   }
-
   if (f.big_company) {
     let kw = null;
     for (const c of companiesOf(prospect)) { kw = matches(c, q.big_companies); if (kw) break; }
-    if (!kw) return verdict(false, "No big company in the experience", "no_big_company");
-    passed.push(`company: ${repr(kw)}`);
+    checks.push({ hit: kw && `company: ${repr(kw)}`, miss: "No big company in the experience" });
   }
-
   if (f.big_university) {
     let kw = null;
     for (const e of educationOf(prospect)) {
       kw = matches(clean(e.school), q.big_universities);
       if (kw) break;
     }
-    if (!kw) return verdict(false, "No big university in the education", "no_big_university");
-    passed.push(`university: ${repr(kw)}`);
+    checks.push({ hit: kw && `university: ${repr(kw)}`,
+                  miss: "No big university in the education" });
   }
+  return checks;
+}
 
-  if (f.degrees && f.degrees.on) {
-    const wanted = Object.keys(DEGREE_NAMES).filter((k) => f.degrees[k]);
-    if (wanted.length) {
-      const hit = degreeFound(prospect, wanted, q);
-      if (!hit) {
-        return verdict(false,
-          `No ${wanted.map((k) => DEGREE_NAMES[k]).join(" / ")} in the education`,
-          "no_degree");
-      }
-      passed.push(`degree: ${DEGREE_NAMES[hit.kind]}`);
-    }
-  }
-
-  return verdict(true, passed.join("; "));
+function degreeChecks(prospect, q, f) {
+  return Object.keys(DEGREE_NAMES).filter((k) => f.degrees && f.degrees[k]).map((k) => ({
+    hit: degreeFound(prospect, k, q) && `degree: ${DEGREE_NAMES[k]}`,
+    miss: `No ${DEGREE_NAMES[k]} in the education`,
+  }));
 }
 
 /** YES or NO. Anything not positively qualified is a rejection. */

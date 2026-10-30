@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LinkedIn Harvester",
-  "version": "2.2.76",
+  "version": "2.2.78",
   "description": "Captures Sales Navigator search results and reads lead pages in your logged-in browser, scores them against your persona locally, and sends the qualified URLs to the relay server.",
   "permissions": [
     "tabs",

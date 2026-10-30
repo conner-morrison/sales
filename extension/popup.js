@@ -211,21 +211,31 @@ $("histBtn").addEventListener("click", async () => {
 const BOXES = {
   fAI: ["stacks", "ai"], fFull: ["stacks", "fullstack"], fData: ["stacks", "data"],
   fBS: ["degrees", "bs"], fMS: ["degrees", "ms"], fPhD: ["degrees", "phd"],
-  fMBA: ["degrees", "mba"], fDeg: ["degrees", "on"],
+  fMBA: ["degrees", "mba"],
   fSpeak: ["speaking"], fCompany: ["big_company"], fUni: ["big_university"],
+  aStack: ["all", "stacks"], aBack: ["all", "background"], aDeg: ["all", "degrees"],
 };
+
+// Beside each group's AND box: how the ticked boxes in it combine.
+const MODES = { aStack: "mStack", aBack: "mBack", aDeg: "mDeg" };
+
+function showModes() {
+  for (const [box, span] of Object.entries(MODES)) {
+    $(span).textContent = $(box).checked ? "(all ticked)" : "(any ticked)";
+  }
+}
 
 function showFilters(f) {
   $("fYears").value = f.min_years;
   for (const [id, path] of Object.entries(BOXES)) {
     $(id).checked = !!(path.length === 2 ? f[path[0]][path[1]] : f[path[0]]);
   }
-  $("degBox").hidden = !$("fDeg").checked;
+  showModes();
 }
 
 function readFilters() {
   const f = { min_years: Math.max(0, Number($("fYears").value) || 0),
-              stacks: {}, degrees: {} };
+              stacks: {}, degrees: {}, all: {} };
   for (const [id, path] of Object.entries(BOXES)) {
     if (path.length === 2) f[path[0]][path[1]] = $(id).checked;
     else f[path[0]] = $(id).checked;
@@ -234,7 +244,7 @@ function readFilters() {
 }
 
 async function saveFilters() {
-  $("degBox").hidden = !$("fDeg").checked;
+  showModes();
   const f = await chrome.runtime.sendMessage({ type: "SET_FILTERS", filters: readFilters() });
   if (f) showFilters(f);
 }
