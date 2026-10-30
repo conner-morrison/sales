@@ -334,8 +334,30 @@ export function firstName(fullName) {
   return first || null;
 }
 
+// Words after a surname that are not part of it: generations and credentials.
+const SUFFIX = /^(jr|sr|ii|iii|iv|v|phd|md|mba|cpa|pmp|esq|dds|rn|cfa|msc|ma|bsc|ba|mph)\.?$/i;
+// Words that open a surname of more than one word: van der Meer, de la Cruz, Da Silva.
+const PARTICLE = /^(van|von|der|den|de|del|della|di|da|dos|das|du|la|le|st\.?|ter|ten|bin|al)$/i;
+
 /**
- * Send one lead: its first name and URL, as one message.
+ * The surname: the last word of a name, with what follows it on LinkedIn left off --
+ * ", MBA", "(She/Her)", "Jr." -- and the particles that open it kept on. Null when the
+ * name is a single word.
+ */
+export function lastName(fullName) {
+  const words = String(fullName ?? "")
+    .split(",")[0]
+    .replace(/\(.*?\)|\[.*?\]/g, " ")
+    .trim().split(/\s+/).filter(Boolean);
+  while (words.length > 1 && SUFFIX.test(words[words.length - 1])) words.pop();
+  if (words.length < 2) return null;
+  let start = words.length - 1;
+  while (start > 1 && PARTICLE.test(words[start - 1])) start--;
+  return words.slice(start).join(" ");
+}
+
+/**
+ * Send one lead: its first name and URL, as one message. The last name stays here.
  *
  * `warning` marks a refusal that retrying will not fix -- no registration, no channel --
  * which is what turns automatic sending off. Anything else is worth trying again.
@@ -350,7 +372,8 @@ export async function sendLead(lead) {
   const res = await call("POST", "/publish", {
     token: r.workerId,
     // The URL as the id: the same person sent twice is one message, not two.
-    body: { channel: r.channel, body: { first_name: firstName(lead.name), url },
+    body: { channel: r.channel,
+            body: { first_name: firstName(lead.name), url },
             id: url },
   });
   if (res.status === 401) {
@@ -440,8 +463,9 @@ export async function addToOutbox(lead, sent = null) {
   return withOutbox((list) =>
     done.has(lead.url) || list.some((l) => l.url === lead.url)
       ? null
-      : [...list, { url: lead.url, name: lead.name || null, title: lead.title || null,
-                    at: Date.now() }]);
+      : [...list, { url: lead.url, name: lead.name || null,
+                    firstName: firstName(lead.name), lastName: lastName(lead.name),
+                    title: lead.title || null, at: Date.now() }]);
 }
 
 export async function removeFromOutbox(url) {

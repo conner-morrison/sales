@@ -27,7 +27,7 @@
 
 import { classify, screenCard, verdictOf } from "./qualify.js";
 import { parseTenure } from "./tenure.js";
-import { safeShouldEnrich } from "./prefilter.js";
+import { safeShouldEnrich, loadGroups } from "./prefilter.js";
 import { DEFAULT_RULES } from "./rules.js";
 import { loadConfig } from "./config.js";
 import * as results from "./results.js";
@@ -437,6 +437,9 @@ async function runCapture(cfg, tab) {
   // sees cards the persona did not already decide -- and a slow or throwing filter
   // cannot cost anything on a card that was never going to be enriched.
   let filterError = null;
+  // The name lists the filter reads. If they cannot be loaded the filter throws, which
+  // enriches everyone and says so, rather than turning everyone away.
+  try { await loadGroups(); } catch (e) { filterError = `prefilter.js: ${e.message || e}`; }
   const screen = (lead) => {
     const byRules = screenCard(lead, q);
     if (byRules) return byRules;
