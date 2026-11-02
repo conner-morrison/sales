@@ -286,10 +286,40 @@ function pageState() {
 /** The pagination control. Clicked, never synthesised as a URL: driving the real button
  *  is both more reliable across markup changes and ordinary page use. */
 function nextButton() {
-  return [...document.querySelectorAll("button")].find((b) => {
-    const t = ((b.getAttribute("aria-label") || "") + " " + (b.innerText || "")).toLowerCase();
-    return t.includes("next") && !b.disabled;
-  }) || null;
+  const label = (b) =>
+    ((b.getAttribute("aria-label") || "") + " " + (b.innerText || "")).trim().toLowerCase();
+  const enabled = (b) => !b.disabled && b.getAttribute("aria-disabled") !== "true";
+  const buttons = [...document.querySelectorAll("button")].filter((b) => label(b).includes("next"));
+  // The pager's own button, when it can be told apart. Disabled means the last page: do
+  // not fall back to some other "next" on the page -- a tip or a panel's arrow -- whose
+  // click leaves the search where it is.
+  const pager = buttons.find((b) => b.matches(".artdeco-pagination__button--next")
+                                    || /^next$/.test(label(b)));
+  if (pager) return enabled(pager) ? pager : null;
+  return buttons.find(enabled) || null;
+}
+
+function firstLeadId() {
+  const first = cards()[0];
+  return first ? leadIdFrom(first)?.id || null : null;
+}
+
+/**
+ * Wait for a click on Next to have turned the page: the first card is a different
+ * person. A click that lands but changes nothing used to count as a turn, and the run
+ * read the same page again, found no one new, and pressed again -- for hours.
+ */
+function pageTurned(before, timeoutMs) {
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const tick = () => {
+      const now = firstLeadId();
+      if (now && now !== before) return resolve(true);
+      if (Date.now() - started > timeoutMs) return resolve(false);
+      setTimeout(tick, 400);
+    };
+    tick();
+  });
 }
 
 /**
@@ -368,13 +398,22 @@ chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
   }
 
   if (msg?.type === "CAPTURE_NEXT") {
-    const btn = nextButton();
-    if (!btn) {
-      sendResponse({ ok: false, end: true, error: "no_next_button" });
-      return true;
-    }
-    btn.click();
-    sendResponse({ ok: true, end: false });
+    (async () => {
+      const btn = nextButton();
+      if (!btn) {
+        sendResponse({ ok: false, end: true, error: "no_next_button" });
+        return;
+      }
+      const before = firstLeadId();
+      btn.click();
+      if (await pageTurned(before, msg.timeoutMs || 30000)) {
+        sendResponse({ ok: true, end: false });
+      } else {
+        sendResponse({ ok: false, end: false,
+                       error: `the page did not change after pressing ${JSON.stringify(
+                         (btn.getAttribute("aria-label") || btn.innerText || "").trim())}` });
+      }
+    })();
     return true;
   }
 });

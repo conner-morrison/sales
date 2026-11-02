@@ -349,11 +349,67 @@ async function runStart() {
   results.noteEvent(onSearch
     ? `Started: capture and read the search at ${tab.url}`
     : `Started: reading the ${waiting} queued lead(s) - no search to capture`);
-  runAll(onSearch ? tab : null).catch(async (e) => {
-    await stop(`run failed: ${String(e.message || e)}`);
-  });
+  launch(onSearch ? tab : null);
   return { ok: true, phases: onSearch ? "capture + enrich" : "enrich" };
 }
+
+// --- surviving a restarted worker -------------------------------------------------
+//
+// A run lives in this worker's memory, its state in chrome.storage.session. Chrome ends
+// the worker when the computer sleeps, on an update, or simply when it chooses to; the
+// session storage survives it and the loop does not. The state then said "running"
+// forever while nothing ran -- the popup frozen on the search tab's last "scrolling
+// (pass N)" for hours, on the same page.
+//
+// So a worker that finds a run marked running which it did not start itself takes it
+// up again: same run, same people seen, the search tab where it was. The alarm is what
+// wakes a worker to notice, rather than waiting for someone to open the popup.
+
+const WATCH = "run-watch";
+let runHere = false;                        // a run was started or taken up by this worker
+
+function launch(searchTab) {
+  runHere = true;
+  chrome.alarms.create(WATCH, { periodInMinutes: 1 });
+  runAll(searchTab).catch(async (e) => {
+    await stop(`run failed: ${String(e.message || e)}`);
+  });
+}
+
+async function resumeOrphan() {
+  // Claimed before the first await: a worker woken by the alarm calls this twice at
+  // once, from the top level and from the alarm, and only one may take the run up.
+  if (runHere) {
+    if (!(await state()).running) await chrome.alarms.clear(WATCH);
+    return;
+  }
+  runHere = true;
+  const s = await state();
+  if (!s.running) { runHere = false; await chrome.alarms.clear(WATCH); return; }
+
+  let tab = null;
+  if (s.tabId !== null) {
+    try {
+      const t = await chrome.tabs.get(s.tabId);
+      if (/linkedin\.com\/sales\/search\//.test(t.url || "")) tab = t;
+    } catch { /* closed */ }
+  }
+  const waiting = (await results.getRun()).pending.length;
+  if (!tab && (s.phase === "capture" || !waiting)) {
+    await stop(`the run was interrupted on search page ${s.page} when Chrome restarted the ` +
+               `extension, and the search tab is gone - open the search and press Start`);
+    return;
+  }
+  results.noteEvent(`Chrome restarted the extension mid-run - carrying on from ` +
+                    (tab ? `search page ${s.page}` : `the ${waiting} queued lead(s)`));
+  // The page counter goes up as a page is read; this one is read again, under its number.
+  await setState({ page: Math.max(0, s.page - 1), current: null, currentName: null,
+                   nextAt: 0, phase: tab ? "capture" : "enrich" });
+  launch(tab);
+}
+
+chrome.alarms.onAlarm.addListener((a) => { if (a.name === WATCH) resumeOrphan(); });
+resumeOrphan();
 
 async function runAll(searchTab) {
   const cfg = await loadConfig();
@@ -452,6 +508,7 @@ async function runCapture(cfg, tab) {
 
   let captured = 0;
   let unreadable = 0;
+  let stale = 0;
 
   while ((await state()).running) {
     if (!(await waitWhilePaused())) return { captured, reason: "stopped" };
@@ -490,6 +547,15 @@ async function runCapture(cfg, tab) {
 
     const added = await results.addCaptured(leads, screen);
     captured += added.added;
+
+    // A page of nobody new, twice running, is the search not moving: the same page read
+    // again however Next was pressed. Stop and say so rather than circle on it.
+    stale = added.added ? 0 : stale + 1;
+    if (stale >= 2) {
+      await setState({ stopReason: `search page ${page} showed only people already read ` +
+                                   `in this run, twice in a row - the search is not moving on` });
+      return { captured, reason: "stuck" };
+    }
 
     const st = await state();
     // Said once per run, not once per lead: a filter that throws throws for everyone,
@@ -539,7 +605,8 @@ async function runCapture(cfg, tab) {
       await waitFor(c.settle_ms, "focusing the search");
     } catch { /* tab went away; the ask below will report it */ }
 
-    const nav = await ask(s.tabId, { type: "CAPTURE_NEXT" }, "capture.js");
+    const nav = await ask(s.tabId, { type: "CAPTURE_NEXT", timeoutMs: c.page_timeout_ms },
+                          "capture.js");
     if (!nav || !nav.ok) {
       await setState({ stopReason: `the Next button on search page ${page} could not be ` +
                                    `pressed (${(nav && nav.error) || "no answer from the page"})` });
@@ -835,36 +902,6 @@ async function pause(on) {
   results.noteEvent(on ? "Paused - Pause pressed" : "Resumed - Resume pressed");
   return { ok: true, paused: !!on };
 }
-
-/**
- * A run cannot survive this worker being restarted, so say so rather than appear alive.
- *
- * The loop is an async function held in memory. Reloading the extension -- which the
- * sync script can cause, and which Chrome does on its own when the unpacked source
- * changes -- kills the worker and the loop with it, while chrome.storage.session may
- * still say `running`. The popup then shows a run that stopped happening some hours
- * ago, which is exactly the "it stops working after a while" symptom.
- *
- * This module's top level runs on every worker start, and a live loop keeps the worker
- * alive, so reaching here with running:true means the loop is gone. Nothing is lost:
- * the queue, the counts and the qualified list are in storage.local. It does not resume
- * by itself, because an unattended restart is not a good reason to start opening
- * profiles again without being asked.
- */
-(async () => {
-  const s = await state();
-  if (!s.running) return;
-  await setState({
-    running: false, paused: false, current: null, currentName: null, nextAt: 0,
-    stopReason: "interrupted: the extension restarted mid-run",
-  });
-  await results.finishRun("interrupted by an extension restart");
-  results.noteEvent("Stopped: the extension restarted mid-run (Chrome closed, the " +
-                    "extension reloaded, or it was updated). Press Start to carry on");
-  const run = await results.getRun();
-  await bumpStat(`the extension restarted mid-run - ${run.pending.length} lead(s) are ` +
-                 `still queued. Press Start to carry on; nothing decided was lost`);
-})();
 
 // Pick up a registration that was waiting for approval when this worker last died, and
 // any leads that qualified while sending could not keep up.
