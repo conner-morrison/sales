@@ -121,6 +121,16 @@
     <label><input type="checkbox" id="fPhD"> PhD</label>
     <label><input type="checkbox" id="fMBA"> MBA</label>
   </div>
+  <!-- Read from the search card, before a lead page is opened (prefilter.js). Nothing
+       ticked: no name screen at all. -->
+  <div class="ftitle gtitle">Grouping
+    <label title="Every ticked box in this group must match"><input type="checkbox" id="aGroup"> AND</label>
+    <span id="mGroup"></span></div>
+  <div class="checks">
+    <label title="First and last name against group.md"><input type="checkbox" id="fG1"> 1</label>
+    <label><input type="checkbox" id="fG2"> 2</label>
+    <label><input type="checkbox" id="fG3"> 3</label>
+  </div>
 
   <!-- Start alone when idle; Pause/Resume beside Stop while a run is alive, so
        suspending and ending are never the same click. -->

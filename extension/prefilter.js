@@ -29,7 +29,25 @@ import { firstName, lastName } from "./relay.js";
  * page load rather than silently drop people.
  */
 
-export function shouldEnrich(lead) {
+/**
+ * The popup's Grouping boxes, by name. Each takes a lead and says whether it passes.
+ * null is a box with no rule behind it yet: ticking it changes nothing.
+ */
+const GROUPINGS = { 1: grouping1, 2: null, 3: null };
+
+/**
+ * `grouping` is the popup's Grouping set: { 1, 2, 3, all }. Nothing ticked is no name
+ * screen at all. Otherwise any one ticked box passing is enough, or every one with AND.
+ */
+export function shouldEnrich(lead, grouping = {}) {
+  const ticked = Object.keys(GROUPINGS).filter((k) => grouping[k] && GROUPINGS[k]);
+  if (!ticked.length) return true;
+  const passes = (k) => GROUPINGS[k](lead);
+  return grouping.all ? ticked.every(passes) : ticked.some(passes);
+}
+
+/** Grouping "1": first and last name against the two groups in group.md. */
+function grouping1(lead) {
   if (!GROUPS) throw new Error("group.md was not loaded");
   // A is the first name, B the last name, as the relay extracts them.
   const a = firstName(lead.full_name);
@@ -172,11 +190,11 @@ export function matchedName(fullName) {
  * Run the filter without letting it break a run. You should not need to touch this: a
  * throw is a bug in shouldEnrich, and the honest response is to enrich anyway.
  */
-export function safeShouldEnrich(lead, fn = shouldEnrich) {
+export function safeShouldEnrich(lead, grouping = {}, fn = shouldEnrich) {
   try {
     // Only an explicit false rejects. A filter that forgets to return, or returns
     // undefined down one branch, must not quietly drop everyone it touches.
-    return { enrich: fn(lead) !== false, error: null };
+    return { enrich: fn(lead, grouping) !== false, error: null };
   } catch (e) {
     return { enrich: true, error: String((e && e.message) || e) };
   }

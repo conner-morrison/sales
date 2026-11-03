@@ -213,11 +213,13 @@ const BOXES = {
   fBS: ["degrees", "bs"], fMS: ["degrees", "ms"], fPhD: ["degrees", "phd"],
   fMBA: ["degrees", "mba"],
   fSpeak: ["speaking"], fCompany: ["big_company"], fUni: ["big_university"],
+  fG1: ["grouping", "1"], fG2: ["grouping", "2"], fG3: ["grouping", "3"],
   aStack: ["all", "stacks"], aBack: ["all", "background"], aDeg: ["all", "degrees"],
+  aGroup: ["all", "grouping"],
 };
 
 // Beside each group's AND box: how the ticked boxes in it combine.
-const MODES = { aStack: "mStack", aBack: "mBack", aDeg: "mDeg" };
+const MODES = { aStack: "mStack", aBack: "mBack", aDeg: "mDeg", aGroup: "mGroup" };
 
 function showModes() {
   for (const [box, span] of Object.entries(MODES)) {
@@ -235,7 +237,7 @@ function showFilters(f) {
 
 function readFilters() {
   const f = { min_years: Math.max(0, Number($("fYears").value) || 0),
-              stacks: {}, degrees: {}, all: {} };
+              stacks: {}, degrees: {}, grouping: {}, all: {} };
   for (const [id, path] of Object.entries(BOXES)) {
     if (path.length === 2) f[path[0]][path[1]] = $(id).checked;
     else f[path[0]] = $(id).checked;

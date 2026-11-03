@@ -75,9 +75,13 @@ async function rules() {
 
 /**
  * The popup's filters: minimum years, and three groups of checks -- tech stack,
- * background, degrees. `all` holds each group's AND box: off, any one ticked check in
- * the group is enough. Read for every lead, so a change in the popup applies from the
- * next profile on.
+ * background, degrees -- plus grouping, the name screen prefilter.js runs on search
+ * cards. `all` holds each group's AND box: off, any one ticked check in the group is
+ * enough. Read for every lead, so a change in the popup applies from the next profile
+ * on (grouping: from the next search page).
+ *
+ * Grouping "1" starts ticked: it is the name screen every run had before the box
+ * existed, so a saved setting from then keeps it.
  */
 const DEFAULT_FILTERS = {
   min_years: 10,
@@ -86,7 +90,8 @@ const DEFAULT_FILTERS = {
   big_company: false,
   big_university: false,
   degrees: { bs: false, ms: false, phd: false, mba: false },
-  all: { stacks: false, background: false, degrees: false },
+  grouping: { 1: true, 2: false, 3: false },
+  all: { stacks: false, background: false, degrees: false, grouping: false },
 };
 
 async function filters() {
@@ -100,6 +105,7 @@ async function filters() {
     ...DEFAULT_FILTERS, ...s,
     stacks: { ...DEFAULT_FILTERS.stacks, ...(s.stacks || {}) },
     degrees: { ...DEFAULT_FILTERS.degrees, ...ticked },
+    grouping: { ...DEFAULT_FILTERS.grouping, ...(s.grouping || {}) },
     all: { ...DEFAULT_FILTERS.all, ...(s.all || {}) },
   };
 }
@@ -496,10 +502,12 @@ async function runCapture(cfg, tab) {
   // The name lists the filter reads. If they cannot be loaded the filter throws, which
   // enriches everyone and says so, rather than turning everyone away.
   try { await loadGroups(); } catch (e) { filterError = `prefilter.js: ${e.message || e}`; }
+  // The popup's Grouping boxes, read again before each page.
+  let grouping = {};
   const screen = (lead) => {
     const byRules = screenCard(lead, q);
     if (byRules) return byRules;
-    const { enrich, error } = safeShouldEnrich(lead);
+    const { enrich, error } = safeShouldEnrich(lead, grouping);
     if (error && !filterError) filterError = `prefilter.js threw: ${error}`;
     if (enrich) return false;
     return { reasons: ["Excluded by prefilter.js"],
@@ -545,6 +553,8 @@ async function runCapture(cfg, tab) {
       return { ...lead, tenure_months: t.role, company_tenure_months: t.company };
     });
 
+    const f = await filters();
+    grouping = { ...f.grouping, all: f.all.grouping };
     const added = await results.addCaptured(leads, screen);
     captured += added.added;
 
