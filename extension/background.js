@@ -32,7 +32,8 @@ import { DEFAULT_RULES } from "./rules.js";
 import { loadConfig } from "./config.js";
 import * as results from "./results.js";
 import * as relay from "./relay.js";
-import { notifyTelegram, finishedMessage, getTelegram, setTelegram } from "./telegram.js";
+import { notifyTelegram, finishedMessage, stoppedMessage, getTelegram, setTelegram }
+  from "./telegram.js";
 import * as history from "./history.js";
 
 const VERSION = chrome.runtime.getManifest().version;
@@ -474,6 +475,11 @@ async function finish() {
       results.noteEvent(`Telegram notification failed: ${r.error}`);
     }
   }
+  // The search stopped turning its pages -- unreadable, stuck, no Next button -- and the
+  // run read what was queued and ended here. A page limit is the user's own.
+  if (s.running && s.stopReason && !/^page limit/.test(s.stopReason)) {
+    await alertStop(s.stopReason);
+  }
   await results.finishRun(s.stopReason || "finished");
   await setState({ running: false, paused: false, current: null, currentName: null,
                    nextAt: 0 });
@@ -777,11 +783,11 @@ async function runEnrich(cfg, limit = 0) {
       // nothing and costs the same exposure as the ones that did.
       if (c.yes_cap && counts.yes >= c.yes_cap) {
         return stop(`target reached - ${counts.yes} qualified. Send to server, ` +
-                    `or Download the .txt`);
+                    `or Download the .txt`, { expected: true });
       }
       if (c.session_cap && counts.enriched >= c.session_cap) {
         return stop(`session limit reached (${c.session_cap}) - press Start again ` +
-                    `to continue`);
+                    `to continue`, { expected: true });
       }
       if (!(await state()).running) return;
 
@@ -859,13 +865,26 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 // --- stop ---------------------------------------------------------------------
 
-async function stop(reason) {
+/**
+ * End a run now. `reason` null is Stop pressed; any other reason is the run stopping by
+ * itself, which goes to Telegram too -- unless `expected`, a limit the user set.
+ */
+async function stop(reason, { expected = false } = {}) {
   results.noteEvent(`Stopped: ${reason || "Stop pressed"}`);
   await setState({ running: false, paused: false, current: null, currentName: null,
                    nextAt: 0, stopReason: reason || "stopped by the user" });
   await results.finishRun(reason || "stopped by the user");
   await closeEnrichTab();
-  if (reason) await bumpStat(reason);
+  if (!reason) return;
+  await bumpStat(reason);
+  if (!expected) await alertStop(reason);
+}
+
+/** Tell Telegram a run stopped by itself. A failure to send is logged, not thrown. */
+async function alertStop(reason) {
+  const r = await notifyTelegram(stoppedMessage(reason,
+                                                results.summarize(await results.getRun())));
+  if (!r.ok && !r.skipped) results.noteEvent(`Telegram notification failed: ${r.error}`);
 }
 
 /**
@@ -979,7 +998,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (msg.telegram) await setTelegram(msg.telegram);
       sendResponse({ name: await relay.getName(), telegram: await getTelegram() });
     } else if (msg.type === "TEST_TELEGRAM") {
-      sendResponse(await notifyTelegram(`${await relay.getName()}: test message - ` +
+      sendResponse(await notifyTelegram("Test message - " +
                                         "notifications reach this chat."));
     } else if (msg.type === "REGISTER") {
       sendResponse(await relay.register());
