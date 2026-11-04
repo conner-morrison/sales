@@ -42,7 +42,12 @@ function secondsLeft(nextAt) {
 function statusLine(s) {
   // Idle with leads still queued is the state after an interrupted run. Saying so is
   // the difference between "it broke" and "press Start".
-  if (s && !s.running && s.pending) return `${s.pending} queued - press Start to carry on`;
+  // The stop reason goes first: without it "press Start" reads as a finish, and the
+  // thing worth knowing -- why it stopped -- is nowhere on screen.
+  if (s && !s.running && s.pending) {
+    return (s.stopReason ? `${cap(s.stopReason)}. ` : "") +
+           `${s.pending} queued - press Start to carry on`;
+  }
   if (!s || !s.running) return (s && s.summary) || "";
   if (s.paused) return "paused - will resume where it stopped";
 
@@ -74,7 +79,7 @@ async function refresh() {
   last = s;
   $("runDot").className = "dot" + (running ? (paused ? "" : " on") : "");
   $("phase").textContent = !running
-    ? (s.finishedAt ? "Finished" : "Idle")
+    ? (s.stopReason ? "Stopped" : s.finishedAt ? "Finished" : "Idle")
     : (paused ? `${cap(s.phase || "run")} — paused` : cap(s.phase || "running"));
   $("session").textContent = statusLine(s);
 
@@ -215,11 +220,10 @@ const BOXES = {
   fSpeak: ["speaking"], fCompany: ["big_company"], fUni: ["big_university"],
   fG1: ["grouping", "1"], fG2: ["grouping", "2"], fG3: ["grouping", "3"],
   aStack: ["all", "stacks"], aBack: ["all", "background"], aDeg: ["all", "degrees"],
-  aGroup: ["all", "grouping"],
 };
 
 // Beside each group's AND box: how the ticked boxes in it combine.
-const MODES = { aStack: "mStack", aBack: "mBack", aDeg: "mDeg", aGroup: "mGroup" };
+const MODES = { aStack: "mStack", aBack: "mBack", aDeg: "mDeg" };
 
 function showModes() {
   for (const [box, span] of Object.entries(MODES)) {
@@ -308,8 +312,21 @@ $("sendBtn").addEventListener("click", async () => {
   refresh();
 });
 
+// Chrome lets the user withhold an extension's site access ("Site access: on click"),
+// and the server then answers only as a web page would be answered: refused by CORS,
+// which the extension can only report as "cannot reach the relay server". Asked first
+// thing in the click, while Chrome still counts it as one; already granted, it is a no-op.
+const RELAY_ORIGINS = ["https://relay-production-7643.up.railway.app/*"];
+
 $("regBtn").addEventListener("click", async () => {
+  const granted = await chrome.permissions.request({ origins: RELAY_ORIGINS })
+    .catch(() => false);
   warn("");
+  if (!granted) {
+    $("err").textContent = "Chrome is not letting this extension reach the relay server - " +
+      "allow it, or set Site access to \"On all sites\" in chrome://extensions";
+    return;
+  }
   $("err").textContent = "";
   $("regBtn").disabled = true;
   await chrome.runtime.sendMessage({ type: "SET_SETTINGS", name: $("nameIn").value });

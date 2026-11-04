@@ -31,22 +31,48 @@ import { firstName, lastName } from "./relay.js";
 
 /**
  * The popup's Grouping boxes, by name. Each takes a lead and says whether it passes.
- * null is a box with no rule behind it yet: ticking it changes nothing.
+ *
+ * The boxes are the categories nameCategory puts a person in, one at most.
  */
-const GROUPINGS = { 1: grouping1, 2: null, 3: null };
+const GROUPINGS = {
+  1: (lead) => nameCategory(lead) === "1",
+  2: (lead) => nameCategory(lead) === "2",
+  3: (lead) => nameCategory(lead) === "3",
+};
 
 /**
- * `grouping` is the popup's Grouping set: { 1, 2, 3, all }. Nothing ticked is no name
- * screen at all. Otherwise any one ticked box passing is enough, or every one with AND.
+ * `grouping` is the popup's Grouping set: { 1, 2, 3 }. Nothing ticked is no name
+ * screen at all; otherwise a person passes when the box they belong in is ticked.
  */
 export function shouldEnrich(lead, grouping = {}) {
-  const ticked = Object.keys(GROUPINGS).filter((k) => grouping[k] && GROUPINGS[k]);
+  const ticked = Object.keys(GROUPINGS).filter((k) => grouping[k]);
   if (!ticked.length) return true;
-  const passes = (k) => GROUPINGS[k](lead);
-  return grouping.all ? ticked.every(passes) : ticked.some(passes);
+  return ticked.some((k) => GROUPINGS[k](lead));
 }
 
-/** Grouping "1": first and last name against the two groups in group.md. */
+/**
+ * Which Grouping box this name belongs in: "1", "2", "3", or null for none -- rejected
+ * whichever boxes are ticked. Tried in order:
+ *
+ *   none  B in Group 3 last names, whatever A is
+ *   "1"   it passes grouping1
+ *   "2"   A in Group 2 first names and B in Group 2 last names
+ *   none  A in Group 3 first names
+ *   "3"   everyone else
+ */
+export function nameCategory(lead) {
+  const a = firstName(lead.full_name);
+  const b = lastName(lead.full_name);
+  const usable = properLastName(b);
+  const { group2, group3 } = GROUPS;
+  if (usable && inSurnames(group3.last, b)) return null;
+  if (grouping1(lead)) return "1";
+  if (usable && inList(group2.first, a) && inSurnames(group2.last, b)) return "2";
+  if (inList(group3.first, a)) return null;
+  return "3";
+}
+
+/** Box 1's rule: first and last name against Groups 1 and 2 in group.md. */
 function grouping1(lead) {
   if (!GROUPS) throw new Error("group.md was not loaded");
   // A is the first name, B the last name, as the relay extracts them.
@@ -128,7 +154,7 @@ export function parseGroups(md) {
     }
   }
   if (!groups.group1) throw new Error("group.md has no \"# Group 1\" section");
-  for (const k of ["group1", "group2"]) groups[k] ||= { first: new Set(), last: new Set() };
+  for (const k of ["group1", "group2", "group3"]) groups[k] ||= { first: new Set(), last: new Set() };
   return groups;
 }
 

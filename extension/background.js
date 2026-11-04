@@ -91,7 +91,7 @@ const DEFAULT_FILTERS = {
   big_university: false,
   degrees: { bs: false, ms: false, phd: false, mba: false },
   grouping: { 1: true, 2: false, 3: false },
-  all: { stacks: false, background: false, degrees: false, grouping: false },
+  all: { stacks: false, background: false, degrees: false },
 };
 
 async function filters() {
@@ -128,8 +128,8 @@ async function waitWhilePaused() {
   for (;;) {
     const s = await state();
     if (!s.running) return false;
-    const sleep = s.paused ? { asleep: false } : await sleepNow();
-    if (!s.paused && !sleep.asleep) {
+    const night = s.paused ? { asleep: false } : await sleepNow();
+    if (!s.paused && !night.asleep) {
       if (announced === "sleeping") results.noteEvent("Woke up - carrying on with the run");
       if (announced) await setState({ current: null, nextAt: 0 });
       return true;
@@ -138,10 +138,10 @@ async function waitWhilePaused() {
     if (announced !== mode) {
       await setState(mode === "paused"
         ? { current: "Paused", nextAt: 0 }
-        : { current: `Sleeping until ${hhmm(sleep.wakeAt)} New York time`,
-            nextAt: Date.now() + sleep.msLeft });
+        : { current: `Sleeping until ${hhmm(night.wakeAt)} New York time`,
+            nextAt: Date.now() + night.msLeft });
       if (mode === "sleeping") {
-        results.noteEvent(`Went to sleep for the night - waking at ${hhmm(sleep.wakeAt)} New York time`);
+        results.noteEvent(`Went to sleep for the night - waking at ${hhmm(night.wakeAt)} New York time`);
       }
       announced = mode;
     }
@@ -554,7 +554,7 @@ async function runCapture(cfg, tab) {
     });
 
     const f = await filters();
-    grouping = { ...f.grouping, all: f.all.grouping };
+    grouping = f.grouping;
     const added = await results.addCaptured(leads, screen);
     captured += added.added;
 
