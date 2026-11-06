@@ -72,6 +72,27 @@ export function nameCategory(lead) {
   return "3";
 }
 
+/**
+ * The Group 3 university this person studied at, or null. Asked after the lead page is
+ * read, and only of someone whose name put them in box 3: the name let them through, the
+ * education can still drop them.
+ *
+ * A school matches when a list entry appears in it as whole words, so "Indian Institute
+ * of Technology, Bombay" is caught by "Indian Institute of Technology".
+ */
+export function groupThreeSchool(lead, education) {
+  if (!GROUPS || nameCategory(lead) !== "3") return null;
+  const schools = GROUPS.group3.schools;
+  for (const entry of Array.isArray(education) ? education : []) {
+    for (const school of variants(entry && entry.school)) {
+      if (!school) continue;
+      const padded = ` ${school} `;
+      for (const name of schools) if (padded.includes(` ${name} `)) return name;
+    }
+  }
+  return null;
+}
+
 /** Box 1's rule: first and last name against Groups 1 and 2 in group.md. */
 function grouping1(lead) {
   if (!GROUPS) throw new Error("group.md was not loaded");
@@ -116,7 +137,7 @@ function inList(set, name) {
  * counts from the next run on. Kept as normalized forms, matched the way matchedName
  * matches: "José" is "Jose", "O'Brien" is "OBrien".
  *
- *     { group1: { first: Set, last: Set }, group2: { first: Set, last: Set } }
+ *     { group1: { first: Set, last: Set, schools: Set }, group2: ..., group3: ... }
  */
 let GROUPS = null;
 
@@ -128,7 +149,8 @@ export async function loadGroups() {
 }
 
 /**
- * "# Group N" opens a group, "## First Names" / "## Last Names" a list within it. Any
+ * "# Group N" opens a group; "## First Names", "## Last Names" and "## Universities" a
+ * list within it. Any
  * other line inside a list holds names separated by commas, after an optional label
  * ("**A:**", "**Male:**"); headings and blank lines in between are skipped.
  */
@@ -140,12 +162,13 @@ export function parseGroups(md) {
     const line = raw.trim();
     const g = /^#\s+group\s*(\d+)/i.exec(line);
     if (g) {
-      group = groups[`group${g[1]}`] = { first: new Set(), last: new Set() };
+      group = groups[`group${g[1]}`] = { first: new Set(), last: new Set(), schools: new Set() };
       list = null;
       continue;
     }
     if (/^##\s/.test(line) && !/^###/.test(line)) {
-      list = /first/i.test(line) ? "first" : /last/i.test(line) ? "last" : null;
+      list = /first/i.test(line) ? "first" : /last/i.test(line) ? "last"
+           : /universit/i.test(line) ? "schools" : null;
       continue;
     }
     if (!group || !list || !line || line.startsWith("#")) continue;
@@ -154,7 +177,7 @@ export function parseGroups(md) {
     }
   }
   if (!groups.group1) throw new Error("group.md has no \"# Group 1\" section");
-  for (const k of ["group1", "group2", "group3"]) groups[k] ||= { first: new Set(), last: new Set() };
+  for (const k of ["group1", "group2", "group3"]) groups[k] ||= { first: new Set(), last: new Set(), schools: new Set() };
   return groups;
 }
 

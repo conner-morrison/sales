@@ -27,7 +27,7 @@
 
 import { classify, screenCard, verdictOf } from "./qualify.js";
 import { parseTenure } from "./tenure.js";
-import { safeShouldEnrich, loadGroups } from "./prefilter.js";
+import { safeShouldEnrich, loadGroups, groupThreeSchool } from "./prefilter.js";
 import { DEFAULT_RULES } from "./rules.js";
 import { loadConfig } from "./config.js";
 import * as results from "./results.js";
@@ -702,6 +702,9 @@ async function runEnrich(cfg, limit = 0) {
   const between = c.between_ms;
   const breaker = c.failure_breaker;
   const q = await rules();
+  // The Group 3 universities. A run that only drains the queue never went through the
+  // capture that loads them.
+  try { await loadGroups(); } catch { /* the capture reports a broken group.md */ }
   let done = 0;
 
   while ((await state()).running) {
@@ -733,9 +736,17 @@ async function runEnrich(cfg, limit = 0) {
       let verdict = null, reason = "";
       if (data.ok) {
         const merged = { ...lead, ...data };
-        const decided = classify(merged, q, await filters());
-        verdict = verdictOf(decided);
-        reason = decided.reasons[0] || "";
+        const f = await filters();
+        // Box 3 let this name through; a Group 3 university in the education drops it.
+        const school = f.grouping[3] ? groupThreeSchool(lead, data.education) : null;
+        if (school) {
+          verdict = "NO";
+          reason = `Grouping 3: studied at a Group 3 university (${school})`;
+        } else {
+          const decided = classify(merged, q, f);
+          verdict = verdictOf(decided);
+          reason = decided.reasons[0] || "";
+        }
       }
       // Where a YES goes depends on whether sending is on:
       //   on  -- to the server, no history check;

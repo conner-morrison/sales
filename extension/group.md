@@ -235,7 +235,7 @@ Babic, Dimitrov, Georgiev, Horvat, Ivanov, Jovanovic, Juric, Knezevic, Kovacevic
 
 ### Female
 
-**A:** Aaliya, Aarti, Aditi, Aisha, Aishwarya, Alka, Amina, Amna, Anam, Ananya, Anita, Anjali, Anjum, Ankita, Anusha, Aparna, Aqsa, Archana, Areeba, Arpita, Asma, Ayesha
+**A:** Aaliya, Aarti, Aditi, Aisha, Aishwarya, Alka, Amina, Amna, Anam, Ananya, Anitwhena, Anjali, Anjum, Ankita, Anusha, Aparna, Aqsa, Archana, Areeba, Arpita, Asma, Ayesha
 **B:** Bhavna, Bhavya, Bushra
 **C:** Chitra
 **D:** Deepa, Deepika, Divya
@@ -281,3 +281,27 @@ Babic, Dimitrov, Georgiev, Horvat, Ivanov, Jovanovic, Juric, Knezevic, Kovacevic
 **W:** Waheed, Walia, Warraich
 **Y:** Yadav, Yousaf, Yusuf
 **Z:** Zafar, Zaidi, Zaman
+
+## Universities
+
+**A:** Aga Khan University, Air University, Aligarh Muslim University, Allama Iqbal Open University, Amity University, Andhra University, Anna University, Annamalai University
+**B:** Bahauddin Zakariya University, Bahria University, Banaras Hindu University, Bangalore University, Bharathiar University, Bharati Vidyapeeth, BITS Pilani, Birla Institute of Technology and Science, Birla Institute of Technology Mesra
+**C:** Calcutta University, Chandigarh University, Christ University, COMSATS University, COMSATS Institute of Information Technology, Cochin University of Science and Technology, College of Engineering Pune, College of Engineering Guindy
+**D:** Delhi University, Delhi Technological University, Delhi College of Engineering, Dhirubhai Ambani Institute of Information and Communication Technology, DAIICT
+**F:** FAST National University, FAST NUCES, Forman Christian College
+**G:** Ghulam Ishaq Khan Institute, GIK Institute, Government College University Lahore, Gujarat University, Gujarat Technological University, Guru Gobind Singh Indraprastha University, Guru Nanak Dev University
+**H:** Habib University, Hamdard University, Hyderabad Central University
+**I:** IIT Bombay, IIT Delhi, IIT Madras, IIT Kanpur, IIT Kharagpur, IIT Roorkee, IIT Guwahati, IIT Hyderabad, IIT BHU, IIT Indore, IIT Gandhinagar, IIT Ropar, IIT Patna, IIT Jodhpur, IIT Mandi, IIT Dhanbad, IIT ISM Dhanbad, Indian Institute of Technology, IIIT Hyderabad, IIIT Bangalore, IIIT Delhi, IIIT Allahabad, International Institute of Information Technology, Indian Institute of Information Technology, IISc Bangalore, Indian Institute of Science, IIM Ahmedabad, IIM Bangalore, IIM Calcutta, IIM Lucknow, IIM Kozhikode, IIM Indore, Indian Institute of Management, ISB Hyderabad, Indian School of Business, Indian Statistical Institute, Indira Gandhi National Open University, IGNOU, Institute of Business Administration Karachi, IBA Karachi, Institute of Space Technology, International Islamic University Islamabad, Information Technology University Lahore, Isra University, Iqra University
+**J:** Jadavpur University, Jamia Millia Islamia, Jawaharlal Nehru University, Jawaharlal Nehru Technological University, JNTU, Jaypee Institute of Information Technology, Jamia Hamdard
+**K:** Kalinga Institute of Industrial Technology, KIIT, Karachi University, Kerala University, King Edward Medical University, Kurukshetra University
+**L:** Lahore University of Management Sciences, LUMS, Lovely Professional University, Lahore School of Economics
+**M:** Manipal University, Manipal Institute of Technology, Manipal Academy of Higher Education, Mumbai University, Mehran University of Engineering and Technology, Motilal Nehru National Institute of Technology, Madras University, Mysore University
+**N:** National Institute of Technology, NIT Trichy, NIT Warangal, NIT Surathkal, NIT Calicut, NIT Rourkela, NIT Kurukshetra, NIT Jaipur, NIT Allahabad, National University of Sciences and Technology, NUST, National University of Computer and Emerging Sciences, NED University of Engineering and Technology, NED University, Netaji Subhas University of Technology, Netaji Subhas Institute of Technology, NMIMS, Narsee Monjee Institute of Management Studies, Nirma University
+**O:** Osmania University
+**P:** Panjab University, Punjab University, University of the Punjab, Punjab Engineering College, Pune University, Savitribai Phule Pune University, PES University, PSG College of Technology, Pakistan Institute of Engineering and Applied Sciences, PIEAS, Pondicherry University
+**Q:** Quaid-i-Azam University, Quaid-e-Azam University
+**R:** Riphah International University, RV College of Engineering, Rajiv Gandhi Proudyogiki Vishwavidyalaya
+**S:** Shiv Nadar University, SRM University, SRM Institute of Science and Technology, Sardar Patel University, Symbiosis International University, Symbiosis Institute, Sukkur IBA University, SZABIST, Shaheed Zulfikar Ali Bhutto Institute of Science and Technology, Sindh University
+**T:** Thapar University, Thapar Institute of Engineering and Technology
+**U:** University of Delhi, University of Mumbai, University of Calcutta, University of Madras, University of Hyderabad, University of Pune, University of Mysore, University of Kerala, University of Rajasthan, University of Lucknow, University of Allahabad, University of Karachi, University of Lahore, University of Peshawar, University of Engineering and Technology Lahore, UET Lahore, UET Taxila, UET Peshawar, University of Agriculture Faisalabad, University of Management and Technology, UMT Lahore, University of Central Punjab, University of Sindh, University of Balochistan, University of Gujrat, University of Sargodha
+**V:** Vellore Institute of Technology, VIT University, VIT Vellore, Visvesvaraya National Institute of Technology, Visvesvaraya Technological University, VJTI, Veermata Jijabai Technological Institute
