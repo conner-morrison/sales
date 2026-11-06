@@ -113,6 +113,8 @@ async function refresh() {
   // enabled -- pressing it without a channel is how the warning gets shown.
   const rl = s.relay || {};
   autoOn = !!rl.auto;
+  $("reallySent").textContent = rl.reallySent ?? "–";
+  $("dropped").textContent = rl.dropped ?? "–";
   const tally = qualified ? ` (${rl.sent || 0}/${qualified})` : "";
   $("sendBtn").textContent = (autoOn ? "Stop sending" : "Send to server") + tally;
   $("sendBtn").className = autoOn ? "stop" : "ghost";

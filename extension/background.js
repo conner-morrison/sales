@@ -344,7 +344,10 @@ async function runStart() {
   // A fresh capture is a fresh result set. Resuming an enrich-only run keeps the one
   // that is already half finished, otherwise pressing Start to drain a queue would
   // throw away the people it had already qualified.
-  if (onSearch) await results.startRun(tab.url);
+  if (onSearch) {
+    await results.startRun(tab.url);
+    await relay.resetSendCounts();
+  }
 
   await setState({
     running: true, phase: onSearch ? "capture" : "enrich",
@@ -463,12 +466,11 @@ async function finish() {
   // read. Not on a stop, a breaker, or a run that ended short of the last page.
   let telegramNote = "";
   if (s.running && run.captureComplete && !run.pending.length) {
-    const sent = await relay.sentUrls();
-    const onServer = run.qualified.filter((q) => sent.has(q.url)).length;
+    const sends = await relay.sendCounts();
     const c = run.counts;
     const r = await notifyTelegram(finishedMessage({
       captured: c.captured, enriched: c.enriched,
-      leads: run.qualified.length, sent: onServer,
+      leads: run.qualified.length, sent: sends.sent, dropped: sends.dropped,
     }), "HTML");
     if (!r.ok && !r.skipped) {
       telegramNote = `. Telegram notification failed: ${r.error}`;
@@ -757,9 +759,11 @@ async function runEnrich(cfg, limit = 0) {
         if (auto) {
           await relay.addToOutbox(found);
           flushLeads();                         // not awaited: sending must not hold up the run
-        } else if (!duplicateOf) {
-          await history.addToDownload(found);
-          await relay.addToOutbox(found);       // sent once sending is switched on
+        } else {
+          // A duplicate stays out of the download, but still goes to the server once
+          // sending is switched on.
+          if (!duplicateOf) await history.addToDownload(found);
+          await relay.addToOutbox(found);
         }
       }
 
@@ -823,10 +827,16 @@ async function flushLeads() {
       if (!(await relay.isAuto())) return;
       const [queued, sent] = await Promise.all([relay.outbox(), relay.sentUrls()]);
       for (const lead of queued) {
-        if (sent.has(lead.url)) { await relay.removeFromOutbox(lead.url); continue; }
+        // Queued before an earlier copy of the same person went out: already sent.
+        if (sent.has(lead.url)) {
+          await relay.removeFromOutbox(lead.url);
+          await relay.countSend("dropped");
+          continue;
+        }
         if (!(await relay.isAuto())) return;    // Stop sending, pressed mid-pass
         const r = await relay.sendLead(lead);
         if (r.ok) {
+          if (r.outcome === "sent" || r.outcome === "dropped") await relay.countSend(r.outcome);
           await relay.markSent(lead.url);
           await relay.removeFromOutbox(lead.url);
           await history.markSentInHistory(lead.url);
@@ -904,14 +914,19 @@ async function clearRun() {
 // --- what the popup asks for --------------------------------------------------
 
 async function snapshot() {
-  const [s, run, r, sent, queued, toDownload] = await Promise.all([
+  const [s, run, r, sent, queued, toDownload, sends] = await Promise.all([
     state(), results.getRun(), relay.getRelay(), relay.sentUrls(), relay.outbox(),
-    history.downloadList()]);
+    history.downloadList(), relay.sendCounts()]);
   return {
     ...s,
     relay: { status: r.status, fingerprint: r.fingerprint, channel: r.channel, error: r.error,
-             auto: !!r.auto, sent: run.qualified.filter((q) => sent.has(q.url)).length,
-             unsent: queued.length, downloads: toDownload.length },
+             // Sent at some point and not waiting to go again: a lead re-qualified this
+             // run is in the outbox until it really goes out.
+             auto: !!r.auto,
+             sent: run.qualified.filter((q) => sent.has(q.url) &&
+                                               !queued.some((l) => l.url === q.url)).length,
+             unsent: queued.length, downloads: toDownload.length,
+             reallySent: sends.sent, dropped: sends.dropped },
     version: VERSION,
     counts: run.counts,
     pending: run.pending.length,

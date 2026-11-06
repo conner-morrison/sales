@@ -400,16 +400,18 @@ export async function sendLead(lead) {
   // lead counts as handled, but `note` says it was not posted.
   const who = firstName(lead.name) || url;
   const d = res.data || {};
+  // `outcome` is what the counts record: posted, or dropped as already sent. Muted is
+  // neither -- it was not posted, and not for being a repeat.
   if (d.muted) {
-    return { ok: true, channel: r.channel,
+    return { ok: true, channel: r.channel, outcome: "muted",
              note: `${who} was not posted: that URL is muted on the server` };
   }
-  if (d.duplicate) {
-    return { ok: true, channel: r.channel,
+  if (d.duplicate || res.status === 409) {
+    return { ok: true, channel: r.channel, outcome: "dropped",
              note: `${who} was not posted: the server already has this URL` +
                    (d.seq != null ? ` (message #${d.seq})` : "") + ", from an earlier send" };
   }
-  return { ok: true, channel: r.channel };
+  return { ok: true, channel: r.channel, outcome: "sent" };
 }
 
 // --- what has gone ------------------------------------------------------------------
@@ -421,6 +423,31 @@ const SENT = "relaySent";
 export async function sentUrls() {
   const stored = await chrome.storage.local.get(SENT);
   return new Set(stored[SENT] || []);
+}
+
+// What this run's sending really did: `sent`, posted to the channel; `dropped`, held
+// back or refused because the person had already been sent. Reset when a run starts.
+const COUNTS = "relayCounts";
+let countTurn = Promise.resolve();
+
+export async function sendCounts() {
+  const stored = await chrome.storage.local.get(COUNTS);
+  return { sent: 0, dropped: 0, ...(stored[COUNTS] || {}) };
+}
+
+export function countSend(kind) {
+  const next = countTurn.then(async () => {
+    const c = await sendCounts();
+    c[kind] += 1;
+    await chrome.storage.local.set({ [COUNTS]: c });
+  });
+  countTurn = next.catch(() => {});
+  return next;
+}
+
+export async function resetSendCounts() {
+  await countTurn;
+  await chrome.storage.local.set({ [COUNTS]: { sent: 0, dropped: 0 } });
 }
 
 export async function markSent(url) {
@@ -457,11 +484,17 @@ export async function outbox() {
   return withOutbox(() => null);
 }
 
-/** Queue a lead for the server, unless it is already queued or already sent. */
-export async function addToOutbox(lead, sent = null) {
-  const done = sent || await sentUrls();
+/**
+ * Queue a lead for the server, unless it is already queued or already sent. A person
+ * sent before -- in any run -- is dropped here, and counted as dropped.
+ */
+export async function addToOutbox(lead) {
+  if ((await sentUrls()).has(lead.url)) {
+    await countSend("dropped");
+    return outbox();
+  }
   return withOutbox((list) =>
-    done.has(lead.url) || list.some((l) => l.url === lead.url)
+    list.some((l) => l.url === lead.url)
       ? null
       : [...list, { url: lead.url, name: lead.name || null,
                     firstName: firstName(lead.name), lastName: lastName(lead.name),
@@ -481,7 +514,7 @@ export async function seedOutbox(qualified) {
   if (stored[OUTBOX]) return;
   const sent = await sentUrls();
   await withOutbox(() => []);
-  for (const q of qualified) await addToOutbox(q, sent);
+  for (const q of qualified) if (!sent.has(q.url)) await addToOutbox(q);
 }
 
 /** Say why sending stopped, where the popup will show it. */

@@ -87,11 +87,12 @@ export function boxTable(headers, rows) {
  * and the question.
  *
  * Profiles: captured from the search; Enriched: lead pages read in full; Leads: the
- * ones that qualified; Sent: how many of those the server has.
+ * ones that qualified; Sent: posted to the server this run; Dropped: not sent because
+ * the person had been sent before.
  */
-export function finishedMessage({ captured, enriched, leads, sent }) {
-  const table = boxTable(["Profiles", "Enriched", "Leads", "Sent"],
-                         [[captured, enriched, leads, sent]]);
+export function finishedMessage({ captured, enriched, leads, sent, dropped }) {
+  const table = boxTable(["Profiles", "Enriched", "Leads", "Sent", "Dropped"],
+                         [[captured, enriched, leads, sent, dropped]]);
   // Only digits and box characters go inside the <pre>: nothing there needs escaping.
   return "Sir, I've finished going through the current pool. Here's the result:\n\n" +
          `<pre>${table}</pre>\n\n` +
