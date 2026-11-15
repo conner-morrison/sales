@@ -15,7 +15,10 @@
 export const DEFAULT_CONFIG = {
   capture: {
     settle_ms: 2500,              // let the SPA paint before reading cards
-    between_ms: [10000, 20000],   // pause between result pages
+    // Pause between result pages. Not 10-20s any more: a page whose cards the screen
+    // rejects outright is turned straight away, and a run of those turned pages faster
+    // than anyone reads them -- which is when LinkedIn said "too many requests".
+    between_ms: [30000, 90000],
     scroll_pause_ms: [2000, 5000],   // between scroll steps while loading a page
     scroll_step: 0.6,
     // 0 = walk to the end of the result set. Off, because enrich.yes_cap is the
@@ -63,6 +66,20 @@ export const DEFAULT_CONFIG = {
      */
     failure_breaker: 3,
   },
+  limits: {
+    /**
+     * At most this many LinkedIn page loads -- search pages and lead pages together --
+     * in any hour. The pauses above set the usual pace; this caps the bursts they still
+     * allow, such as a stretch of search pages with no one worth opening. 0 = no cap.
+     */
+    hourly_page_cap: 30,
+    /**
+     * How long to rest when LinkedIn says too many requests, in minutes: the first
+     * time, then the next if it says so again straight after, and so on. Past the end
+     * of the list the run stops. A success in between starts the list over.
+     */
+    rest_minutes: [20, 45, 90, 180],
+  },
 };
 
 /** The stored overrides merged over the defaults. */
@@ -72,6 +89,7 @@ export async function loadConfig() {
   return {
     capture: { ...DEFAULT_CONFIG.capture, ...(over.capture || {}) },
     enrich: { ...DEFAULT_CONFIG.enrich, ...(over.enrich || {}) },
+    limits: { ...DEFAULT_CONFIG.limits, ...(over.limits || {}) },
   };
 }
 

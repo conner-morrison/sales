@@ -273,9 +273,31 @@ function waitForResults(timeoutMs) {
   });
 }
 
+/**
+ * Whether LinkedIn is saying the account sent too many requests. It says so in a toast,
+ * a banner, or in place of the page, worded several ways. Answered with a rest, never by
+ * pressing on: carrying on is what gets an account restricted.
+ *
+ * Only LinkedIn's own notices are read, and the page text only when the results did not
+ * render: a profile or a card can say "rate limiting" or "too many requests" about
+ * someone's work, and that must not stop a run.
+ */
+const RATE_LIMIT = /too many requests|(making|sent|made) (a lot of|too many|many) requests|request limit|exceeded .{0,20}limit|try again (later|in a (few|little))|temporarily (restricted|limited|unavailable|blocked)/i;
+
+function rateLimited(hasContent) {
+  const notices = [...document.querySelectorAll(
+    '[role="alert"], [role="alertdialog"], .artdeco-toast-item, .artdeco-inline-feedback, ' +
+    '.artdeco-modal, .artdeco-empty-state, .search-results__no-results')]
+    .filter((el) => el.getClientRects().length)          // shown, not a hidden template
+    .map((el) => el.innerText || "").join(" ");
+  if (RATE_LIMIT.test(notices)) return true;
+  return !hasContent && RATE_LIMIT.test(document.body?.innerText || "");
+}
+
 /** What went wrong, in a form that is diagnosable rather than a guess. */
 function pageState() {
   const url = location.href;
+  if (rateLimited(resultsReady())) return "rate_limited";
   if (!/\/sales\//.test(url)) return `redirected_away [${url.slice(0, 80)}]`;
   const txt = (document.body?.innerText || "").slice(0, 2000);
   if (/sign in|join linkedin|session expired/i.test(txt)) return "auth_wall";
@@ -366,7 +388,9 @@ chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
       await waitForResults(msg.timeoutMs || 30000);
       const beforeScroll = cards().length;
       const problem = pageState();
-      if (problem && !resultsReady()) {
+      // A rate-limit notice over results already on the page still means stop: those
+      // results may be the last page's, and the next request will be refused too.
+      if (problem && (problem === "rate_limited" || !resultsReady())) {
         sendResponse({ ok: false, error: problem, leads: [] });
         return;
       }
@@ -397,6 +421,22 @@ chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
     return true;
   }
 
+  // Where the search stands after a reload: the first person on the list, so the worker
+  // can tell whether a Next that seemed to fail had in fact turned the page.
+  // Whether this page is on the screen: hidden, the list does not load as it scrolls.
+  if (msg?.type === "VISIBILITY") {
+    sendResponse({ visible: document.visibilityState === "visible" });
+    return;
+  }
+
+  if (msg?.type === "PAGE_STATUS") {
+    (async () => {
+      await waitForResults(msg.timeoutMs || 30000);
+      sendResponse({ ok: true, first: firstLeadId(), problem: pageState() });
+    })();
+    return true;
+  }
+
   if (msg?.type === "CAPTURE_NEXT") {
     (async () => {
       const btn = nextButton();
@@ -408,6 +448,8 @@ chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
       btn.click();
       if (await pageTurned(before, msg.timeoutMs || 30000)) {
         sendResponse({ ok: true, end: false });
+      } else if (rateLimited(true)) {
+        sendResponse({ ok: false, end: false, error: "rate_limited" });
       } else {
         sendResponse({ ok: false, end: false,
                        error: `the page did not change after pressing ${JSON.stringify(

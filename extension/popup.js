@@ -82,6 +82,12 @@ async function refresh() {
     ? (s.stopReason ? "Stopped" : s.finishedAt ? "Finished" : "Idle")
     : (paused ? `${cap(s.phase || "run")} — paused` : cap(s.phase || "running"));
   $("session").textContent = statusLine(s);
+  $("setupNote").hidden = !s.switchMissing;
+  const linked = !!(s.profileTab && s.profileTab.linked);
+  $("linkDot").className = "dot" + (linked ? " on" : "");
+  $("linkState").textContent = linked ? "Linked tab" : "A new window";
+  $("linkBtn").textContent = linked ? "Link this tab instead" : "Link this tab";
+  $("unlinkBtn").hidden = !linked;
 
   const c = s.counts || {};
   $("captured").textContent = c.captured ?? "–";
@@ -194,6 +200,38 @@ $("logBtn").addEventListener("click", async () => {
   }
 });
 
+// The tab shown in the window this popup was opened from becomes the profile tab.
+$("linkBtn").addEventListener("click", async () => {
+  $("err").textContent = "";
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab) { $("err").textContent = "No tab to link."; return; }
+  const r = await chrome.runtime.sendMessage({ type: "LINK_TAB", tabId: tab.id });
+  $("err").textContent = r && r.ok
+    ? "Linked. Profiles open in this tab - keep it in its own window, not covered."
+    : cap((r && r.error) || "Could not link this tab");
+  refresh();
+});
+
+$("unlinkBtn").addEventListener("click", async () => {
+  $("err").textContent = "";
+  await chrome.runtime.sendMessage({ type: "UNLINK_TAB" });
+  refresh();
+});
+
+// The Chrome setup file, shipped inside the extension. It cannot be run from here --
+// Chrome lets no extension start a program -- so it is saved for the person to open.
+$("setupBtn").addEventListener("click", async () => {
+  $("err").textContent = "";
+  try {
+    await chrome.downloads.download({ url: chrome.runtime.getURL("setup/make-chrome-shortcut.bat"),
+                                      filename: "Make Chrome shortcut.bat", saveAs: false });
+    $("err").textContent = "Saved Make Chrome shortcut.bat to Downloads. If Chrome asks, " +
+                           "choose Keep, then open it.";
+  } catch (e) {
+    $("err").textContent = cap(String((e && e.message) || e));
+  }
+});
+
 // history.txt is saved from here, like the log: it only grows.
 $("histBtn").addEventListener("click", async () => {
   $("err").textContent = "";
@@ -235,6 +273,9 @@ function showModes() {
 
 function showFilters(f) {
   $("fYears").value = f.min_years;
+  $("fMaxYears").value = f.max_years || "";
+  // The same test qualify.js uses to ignore it.
+  $("yearsWarn").hidden = !(f.max_years && f.max_years < f.min_years);
   for (const [id, path] of Object.entries(BOXES)) {
     $(id).checked = !!(path.length === 2 ? f[path[0]][path[1]] : f[path[0]]);
   }
@@ -243,6 +284,7 @@ function showFilters(f) {
 
 function readFilters() {
   const f = { min_years: Math.max(0, Number($("fYears").value) || 0),
+              max_years: Math.max(0, Number($("fMaxYears").value) || 0),
               stacks: {}, degrees: {}, grouping: {}, all: {} };
   for (const [id, path] of Object.entries(BOXES)) {
     if (path.length === 2) f[path[0]][path[1]] = $(id).checked;
@@ -258,6 +300,7 @@ async function saveFilters() {
 }
 
 $("fYears").addEventListener("change", saveFilters);
+$("fMaxYears").addEventListener("change", saveFilters);
 for (const id of Object.keys(BOXES)) $(id).addEventListener("change", saveFilters);
 
 chrome.runtime.sendMessage({ type: "GET_FILTERS" }).then((f) => { if (f) showFilters(f); })

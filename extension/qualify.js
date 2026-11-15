@@ -277,7 +277,12 @@ export function classify(prospect, rules, filters = {}, today = new Date()) {
 
   const months = experienceMonths(prospect, today);
   const need = roundHalfToEven((Number(f.min_years) || 0) * 12);
-  if (need) {
+  // The maximum is inclusive -- 20 lets exactly 20.0 through -- and ignored when it is
+  // below the minimum, where nobody could pass (the popup says so).
+  const maxYears = Number(f.max_years) || 0;
+  const cap = maxYears && maxYears >= (Number(f.min_years) || 0)
+    ? roundHalfToEven(maxYears * 12) : 0;
+  if (need || cap) {
     if (months === null) {
       return verdict(false, "Years of experience could not be read", "unreadable_experience");
     }
@@ -285,6 +290,11 @@ export function classify(prospect, rules, filters = {}, today = new Date()) {
       return verdict(false,
         `${(months / 12).toFixed(1)} years of experience, under the ` +
         `${fmtG(f.min_years)}-year minimum`, "under_minimum_experience");
+    }
+    if (cap && months > cap) {
+      return verdict(false,
+        `${(months / 12).toFixed(1)} years of experience, over the ` +
+        `${fmtG(maxYears)}-year maximum`, "over_maximum_experience");
     }
     passed.push(`${(months / 12).toFixed(1)} years`);
   }

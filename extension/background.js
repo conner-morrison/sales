@@ -44,7 +44,7 @@ const jitter = (lo, hi) => Math.floor(lo + Math.random() * (hi - lo));
 async function state() {
   const s = await chrome.storage.session.get([
     "phase", "running", "paused", "tabId", "current", "currentName", "nextAt", "stats",
-    "page", "stopReason",
+    "page", "stopReason", "rateHits",
   ]);
   return {
     phase: s.phase || null,                 // 'capture' | 'enrich'
@@ -60,6 +60,8 @@ async function state() {
     currentName: s.currentName || null,
     nextAt: s.nextAt || 0,
     page: s.page || 0,
+    // "Too many requests" answered in a row, which sets how long the next rest is.
+    rateHits: s.rateHits || 0,
     // Only what results.js does not already count: the breaker's streak, and the
     // line the popup shows. Keeping a second copy of captured/enriched/failed here
     // meant two sets of numbers that could disagree about the same run.
@@ -86,6 +88,7 @@ async function rules() {
  */
 const DEFAULT_FILTERS = {
   min_years: 10,
+  max_years: 0,                  // 0 = no maximum
   stacks: { ai: false, fullstack: false, data: false },
   speaking: false,
   big_company: false,
@@ -320,6 +323,230 @@ async function ask(tabId, msg, file) {
   }
 }
 
+/** Reload a tab and wait for the load to complete. */
+function reloadTab(tabId, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (ok) => {
+      if (settled) return;
+      settled = true;
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve(ok);
+    };
+    const listener = (id, info) => {
+      if (id === tabId && info.status === "complete") done(true);
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs.reload(tabId, {}, () => {
+      if (chrome.runtime.lastError) done(false);
+    });
+    setTimeout(() => done(false), timeoutMs);
+  });
+}
+
+// --- not too many requests ----------------------------------------------------------
+//
+// LinkedIn answers a burst with "too many requests" and stops showing results. Two
+// things here: a cap on page loads per hour so bursts do not happen, and a rest -- longer
+// each time it is said again -- when one does. Pressing on into the notice is what turns
+// a slow-down into a restricted account.
+
+const HOUR = 60 * 60 * 1000;
+const LOADS = "pageLoads";                  // when each recent LinkedIn page was loaded
+
+/**
+ * Take one page load from the hour's allowance, waiting for one to free up if it is
+ * spent. False if the run was stopped meanwhile.
+ */
+async function spendLoad(cfg) {
+  const cap = cfg.limits.hourly_page_cap;
+  for (;;) {
+    if (!(await state()).running) return false;
+    const now = Date.now();
+    const { [LOADS]: list } = await chrome.storage.session.get(LOADS);
+    const recent = (list || []).filter((t) => now - t < HOUR);
+    if (!cap || recent.length < cap) {
+      await chrome.storage.session.set({ [LOADS]: [...recent, now] });
+      return true;
+    }
+    await waitFor(recent[0] + HOUR - now + jitter(5000, 60000),
+                  `${cap} LinkedIn pages in the last hour - waiting before the next`);
+  }
+}
+
+/**
+ * LinkedIn said too many requests: rest, telling the log, the popup and Telegram, then
+ * let the caller try again. Each rest in a row is longer; after the last one the run
+ * stops. False if the run stopped, by this or by hand.
+ *
+ * The rest is kept in session storage, so a worker restarted mid-rest finishes it
+ * rather than carrying straight on.
+ */
+async function rest(cfg, where) {
+  const s = await state();
+  const steps = cfg.limits.rest_minutes;
+  const n = s.rateHits;
+  if (n >= steps.length) {
+    await stop(`LinkedIn kept saying too many requests (${where}), after ${n} rests in a ` +
+               `row - leave it a few hours, then press Start`);
+    return false;
+  }
+  const minutes = Math.round(steps[n] * (1 + Math.random() * 0.25));
+  const until = Date.now() + minutes * 60000;
+  await setState({ rateHits: n + 1, restUntil: until,
+                   stats: { ...s.stats, lastError: `LinkedIn said too many requests - ` +
+                                                   `resting ${minutes} min` } });
+  results.noteEvent(`LinkedIn said too many requests (${where}) - resting ${minutes} min ` +
+                    `before trying again`);
+  notifyTelegram(`LinkedIn said too many requests (${where}).\n` +
+                 `Resting ${minutes} min, then carrying on by itself.`);
+  await waitFor(until - Date.now(), `resting ${minutes} min - LinkedIn said too many requests`);
+  await setState({ restUntil: 0 });
+  return (await state()).running;
+}
+
+/** Finish a rest that a restarted worker interrupted. */
+async function finishRest() {
+  const { restUntil } = await chrome.storage.session.get("restUntil");
+  if (restUntil && restUntil > Date.now()) {
+    await waitFor(restUntil - Date.now(), "resting - LinkedIn said too many requests");
+  }
+  await setState({ restUntil: 0 });
+}
+
+/**
+ * Press Next, and make sure the page turned. A press that seems to fail is not the end
+ * of the search: LinkedIn may have refused it for too many requests, or been slow. So
+ * rest or wait, reload, and look at where the search really is -- the click may have
+ * worked after all -- before pressing again. Three tries, then the run stops.
+ */
+async function turnPage(cfg, tabId, page, firstBefore) {
+  const c = cfg.capture;
+  let error = "no answer from the page";
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    if (!(await spendLoad(cfg))) return { ok: true };
+    const nav = await ask(tabId, { type: "CAPTURE_NEXT", timeoutMs: c.page_timeout_ms },
+                          "capture.js");
+    if (nav && nav.ok) return { ok: true };
+    error = (nav && nav.error) || "no answer from the page";
+
+    // Reloaded until it is not refusing, or the rests run out.
+    for (;;) {
+      if (error === "rate_limited") {
+        if (!(await rest(cfg, `turning search page ${page}`))) return { ok: true };
+      } else {
+        results.noteEvent(`Next on search page ${page} did not turn it (${error}) - ` +
+                          `reloading and trying again`);
+        await waitFor(jitter(30000, 60000), `Next on page ${page} did not work - trying again`);
+        if (!(await state()).running) return { ok: true };
+      }
+      await focusSearch(tabId, c);
+      if (!(await spendLoad(cfg))) return { ok: true };
+      await reloadTab(tabId, c.page_timeout_ms);
+      await waitFor(c.settle_ms, `reloading search page ${page}`);
+      const st = await ask(tabId, { type: "PAGE_STATUS", timeoutMs: c.page_timeout_ms },
+                           "capture.js");
+      if (st && st.problem === "rate_limited") { error = "rate_limited"; continue; }
+      // The click had worked: the search is on the next page now.
+      if (st && st.first && st.first !== firstBefore) return { ok: true };
+      break;
+    }
+  }
+  return { ok: false, error };
+}
+
+/**
+ * Make the search the shown tab of its own window, and wait until that window is on the
+ * screen. Its window is never focused: that took the keyboard and the front of the
+ * screen away from whatever the person was doing.
+ */
+async function focusSearch(tabId, c) {
+  try {
+    await chrome.tabs.update(tabId, { active: true });
+    await waitFor(c.settle_ms, "showing the search");
+  } catch { /* tab went away; the ask that follows will report it */ }
+  await waitVisible(tabId, "capture.js", "search");
+}
+
+/**
+ * Wait while a tab's page is hidden.
+ *
+ * Chrome stops drawing a page that is not on the screen -- its window minimized, or
+ * covered completely by other windows -- and LinkedIn's pages then never fill in. Not
+ * being focused is fine: a window that shows even a strip of itself draws normally. So
+ * the run waits, saying why, instead of reading an empty page or stealing the screen.
+ * A page that cannot answer counts as shown; the read that follows reports a real fault.
+ */
+async function waitVisible(tabId, file, what) {
+  let since = 0, told = false, why = null;
+  for (;;) {
+    if (!(await state()).running) return false;
+    const r = await ask(tabId, { type: "VISIBILITY" }, file);
+    if (!r || r.visible !== false) {
+      if (since) {
+        results.noteEvent(`The ${what} window is showing again after ` +
+                          `${Math.round((Date.now() - since) / 60000)} min - carrying on`);
+      }
+      return true;
+    }
+    const now = await hiddenWhy(tabId);
+    if (now.code !== why) {
+      why = now.code;
+      results.noteEvent(`The ${what} window is hidden: ${now.text} - waiting`);
+    }
+    since ||= Date.now();
+    if (!told && Date.now() - since > 10 * 60000) {
+      told = true;
+      notifyTelegram(`The ${what} window has been hidden for 10 minutes, so the run is ` +
+                     `waiting.\nWhy: ${now.text}.\n${now.fix}`);
+    }
+    await waitFor(10000, `waiting: the ${what} window ${now.short}`);
+  }
+}
+
+/**
+ * Why a tab is hidden, as far as can be told: its window minimized, the screen locked,
+ * or else covered. Covered is the one a switch fixes -- Chrome started with
+ * --disable-backgrounding-occluded-windows keeps drawing a window that is covered, and
+ * the "Chrome (Harvester)" shortcut starts it that way.
+ */
+const SWITCH_MISSING = "switchMissing";
+
+// A new Chrome may have been started with the switch: forget until it is seen missing again.
+chrome.runtime.onStartup.addListener(() => chrome.storage.local.remove(SWITCH_MISSING));
+
+async function hiddenWhy(tabId) {
+  try {
+    const t = await chrome.tabs.get(tabId);
+    const w = await chrome.windows.get(t.windowId);
+    // Another tab in front of it in its own window. Only the front tab of a window is
+    // drawn, and no Chrome setting changes that: the tab needs a window of its own.
+    if (!t.active) {
+      return { code: "behind_tab", short: "is behind another tab in its window",
+               text: "another tab is in front of it in its window",
+               fix: "Drag the tab out into a window of its own, and do not switch tabs " +
+                    "in that window." };
+    }
+    if (w.state === "minimized") {
+      return { code: "minimized", short: "is minimized - un-minimize it",
+               text: "the window is minimized",
+               fix: "Un-minimize it; the run carries on by itself." };
+    }
+    if ((await chrome.idle.queryState(60)) === "locked") {
+      return { code: "locked", short: "is hidden - the screen is locked",
+               text: "the screen is locked or turned off",
+               fix: "It carries on by itself once the screen is unlocked." };
+    }
+  } catch { /* window gone or no answer: treat as covered */ }
+  // With the switch on, a covered window stays visible -- so this Chrome lacks it. The
+  // popup offers the setup file until Chrome is next started.
+  await chrome.storage.local.set({ [SWITCH_MISSING]: Date.now() });
+  return { code: "covered", short: "is completely covered by another window",
+           text: "another window covers it completely",
+           fix: "Leave a strip of it showing, or run the setup file the popup offers and " +
+                "restart Chrome: then a covered window keeps working." };
+}
+
 // --- one run, two phases ------------------------------------------------------
 //
 // Start reads the situation: a search tab captures then enriches, anywhere else with
@@ -341,6 +568,15 @@ async function runStart() {
                     "first - nothing is waiting to enrich" };
   }
 
+  // Only the front tab of a window is drawn: sharing one window, the search and the
+  // profiles would take turns being hidden.
+  const linked = await linkedTab();
+  if (onSearch && linked && linked.windowId === tab.windowId) {
+    return { ok: false,
+             error: "the linked profile tab is in the same window as this search - move " +
+                    "one of them to its own window (drag the tab out), then press Start" };
+  }
+
   // A fresh capture is a fresh result set. Resuming an enrich-only run keeps the one
   // that is already half finished, otherwise pressing Start to drain a queue would
   // throw away the people it had already qualified.
@@ -354,6 +590,8 @@ async function runStart() {
     tabId: onSearch ? tab.id : null, page: 0,
     current: null, currentName: null, nextAt: 0, stopReason: null, paused: false,
     stats: { streak: 0, lastError: null },
+    // Start pressed by hand is the person's call: no rest left over from before.
+    rateHits: 0, restUntil: 0,
   });
 
   results.noteEvent(onSearch
@@ -423,6 +661,7 @@ resumeOrphan();
 
 async function runAll(searchTab) {
   const cfg = await loadConfig();
+  await finishRest();
   if (searchTab) {
     // Interleaved: read a page, enrich what it produced, then turn the page. Verdicts
     // arrive while the search is still being walked, and stopping early leaves whole
@@ -531,6 +770,10 @@ async function runCapture(cfg, tab) {
     const s = await state();
     const page = s.page + 1;
     await setState({ page, current: `Reading page ${page}` });
+    // The read scrolls the list, and a hidden page does not load more rows.
+    if (!(await waitVisible(s.tabId, "capture.js", "search"))) {
+      return { captured, reason: "stopped" };
+    }
 
     const res = await ask(s.tabId, {
       type: "CAPTURE_PAGE", timeoutMs: c.page_timeout_ms,
@@ -539,6 +782,17 @@ async function runCapture(cfg, tab) {
 
     if (!res || !res.ok) {
       const err = (res && res.error) || "unknown";
+      // Read again under the same number.
+      await setState({ page: page - 1 });
+      if (err === "rate_limited") {
+        // Not a broken page: LinkedIn wants a rest. Then reload and read it again.
+        if (!(await rest(cfg, `reading search page ${page}`))) return { captured, reason: "stopped" };
+        await focusSearch(s.tabId, c);
+        if (!(await spendLoad(cfg))) return { captured, reason: "stopped" };
+        await reloadTab(s.tabId, c.page_timeout_ms);
+        await waitFor(c.settle_ms, `reloading search page ${page}`);
+        continue;
+      }
       unreadable += 1;
       await setState({ stats: { ...s.stats, lastError: err } });
       // A search that cannot be read twice running is not going to start working.
@@ -554,6 +808,7 @@ async function runCapture(cfg, tab) {
     }
 
     unreadable = 0;
+    await setState({ rateHits: 0 });
     // The card's tenure line is parsed here so the lead carries months rather than
     // prose; nothing downstream should have to read "4 years 2 months in role".
     const leads = res.leads.map((lead) => {
@@ -616,18 +871,12 @@ async function runCapture(cfg, tab) {
 
     await waitFor(jitter(between[0], between[1]), `page ${page} done`);
 
-    try {
-      const t = await chrome.tabs.get(s.tabId);
-      await chrome.windows.update(t.windowId, { focused: true });
-      await chrome.tabs.update(s.tabId, { active: true });
-      await waitFor(c.settle_ms, "focusing the search");
-    } catch { /* tab went away; the ask below will report it */ }
-
-    const nav = await ask(s.tabId, { type: "CAPTURE_NEXT", timeoutMs: c.page_timeout_ms },
-                          "capture.js");
-    if (!nav || !nav.ok) {
+    await focusSearch(s.tabId, c);
+    const nav = await turnPage(cfg, s.tabId, page, res.leads[0]?.lead_id || null);
+    if (!(await state()).running) break;
+    if (!nav.ok) {
       await setState({ stopReason: `the Next button on search page ${page} could not be ` +
-                                   `pressed (${(nav && nav.error) || "no answer from the page"})` });
+                                   `pressed, three tries (${nav.error})` });
       return { captured, reason: "no next button" };
     }
     await waitFor(c.settle_ms, `opening page ${page + 1}`);
@@ -639,34 +888,102 @@ async function runCapture(cfg, tab) {
 // --- phase 2: enrich ----------------------------------------------------------
 
 /**
- * Enrichment's own window, kept focused.
+ * Enrichment's own window, opened without focus and never focused after.
  *
- * Focused is not a preference. Chrome defers rendering and throttles timers in
- * unfocused windows, and a lead page is an SPA that paints well after load -- in the
- * background it frequently never paints at all, and the scraper reads an empty
- * document. Setting focused:false here quietly reintroduced exactly that.
+ * It used to take focus for every profile, on the belief that Chrome does not draw an
+ * unfocused window. What Chrome does not draw is a hidden one -- minimized, or covered
+ * completely -- and focusing was only a heavy way of making sure it showed, which left
+ * the person unable to use their own browser. Now the window opens behind, where the
+ * person last put it, and enrichOne waits while it is hidden (waitVisible).
  *
- * It is a separate window rather than a tab so it does not take over the one the search
- * is in, but it does take focus while a run is going.
+ * A separate window rather than a tab, so it does not take over the one the search is in.
  */
+const ENRICH_BOUNDS = "enrichBounds";
+
 async function enrichTab() {
+  // A tab the person linked from the popup comes first: theirs to place, so it is used
+  // where it is and never closed. Kept in session storage, as tab ids do not outlive
+  // the browser.
+  const linked = await linkedTab();
+  if (linked) {
+    if (!linked.active) await chrome.tabs.update(linked.id, { active: true });
+    return linked.id;
+  }
   const { enrichTabId } = await chrome.storage.session.get(["enrichTabId"]);
   if (enrichTabId !== undefined && enrichTabId !== null) {
     try {
       const t = await chrome.tabs.get(enrichTabId);
+      // The shown tab of its own window; the window itself is left where it is.
       if (!t.active) await chrome.tabs.update(enrichTabId, { active: true });
-      // Re-focus every time: the search tab takes focus back between pages when the
-      // two stages interleave, and an unfocused lead page will not render.
-      await chrome.windows.update(t.windowId, { focused: true });
       return enrichTabId;
     } catch { /* closed; make a new one */ }
   }
+  const { [ENRICH_BOUNDS]: bounds } = await chrome.storage.local.get(ENRICH_BOUNDS);
   const win = await chrome.windows.create({
-    url: "about:blank", focused: true, width: 1100, height: 900,
+    url: "about:blank", focused: false, state: "normal",
+    ...(bounds || { width: 1100, height: 900 }),
   });
   await chrome.storage.session.set({ enrichTabId: win.tabs[0].id });
   return win.tabs[0].id;
 }
+
+// Wherever the person moves or sizes the profile window is where the next one opens --
+// typically a corner of the screen they leave showing.
+chrome.windows.onBoundsChanged.addListener(async (w) => {
+  const { enrichTabId } = await chrome.storage.session.get(["enrichTabId"]);
+  if (enrichTabId === undefined || enrichTabId === null) return;
+  try {
+    if ((await chrome.tabs.get(enrichTabId)).windowId !== w.id) return;
+  } catch { return; }
+  if (w.state !== "normal") return;
+  await chrome.storage.local.set({ [ENRICH_BOUNDS]:
+    { left: w.left, top: w.top, width: w.width, height: w.height } });
+});
+
+// --- the linked profile tab ---------------------------------------------------------
+
+const LINKED = "linkedTabId";
+
+/** The linked tab, or null when none is linked or it has been closed. */
+async function linkedTab() {
+  const { [LINKED]: id } = await chrome.storage.session.get(LINKED);
+  if (id === undefined || id === null) return null;
+  try { return await chrome.tabs.get(id); } catch {
+    await chrome.storage.session.remove(LINKED);
+    return null;
+  }
+}
+
+/**
+ * Link a tab for profiles. Not a search tab: the search needs its own tab, and the
+ * profiles would replace it.
+ */
+async function linkTab(tabId) {
+  const t = await chrome.tabs.get(tabId);
+  if (/linkedin\.com\/sales\/search\//.test(t.url || "")) {
+    return { ok: false, error: "this is a search tab - link a tab in another window for the profiles" };
+  }
+  const s = await state();
+  if (s.tabId !== null && s.tabId === tabId) {
+    return { ok: false, error: "this is the run's search tab - link a tab in another window" };
+  }
+  await chrome.storage.session.set({ [LINKED]: tabId });
+  // A window the extension opened before the link is not needed any more. Mid-run it may
+  // be reading someone; it is closed when the run ends instead.
+  if (!s.running) await closeEnrichTab();
+  results.noteEvent("Profile tab linked: profiles open in it from now on");
+  return { ok: true };
+}
+
+async function linkInfo() {
+  const t = await linkedTab();
+  return t ? { linked: true, windowId: t.windowId } : { linked: false };
+}
+
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  const { [LINKED]: id } = await chrome.storage.session.get(LINKED);
+  if (id === tabId) await chrome.storage.session.remove(LINKED);
+});
 
 async function closeEnrichTab() {
   const { enrichTabId } = await chrome.storage.session.get(["enrichTabId"]);
@@ -689,6 +1006,9 @@ async function enrichOne(tabId, lead, c) {
     return { ok: false, error: `redirected_away [${landed.slice(0, 70)}]` };
   }
 
+  if (!(await waitVisible(tabId, "lead.js", "profile"))) {
+    return { ok: false, error: "stopped" };
+  }
   await waitFor(c.settle_ms, undefined);
   await setState({ current: "reading the profile" });
   const data = await ask(tabId, { type: "READ_LEAD", timeoutMs: c.page_timeout_ms,
@@ -728,7 +1048,16 @@ async function runEnrich(cfg, limit = 0) {
       if (!(await state()).running) return;
       await setState({ current: lead.lead_id, currentName: lead.full_name || null });
 
+      if (!(await spendLoad(cfg))) return;
       const data = await enrichOne(tabId, lead, c);
+      // Stopped while waiting for a hidden window: this person stays on the queue.
+      if (!(await state()).running) return;
+      // LinkedIn wants a rest: take it, then open the same person again.
+      if (!data.ok && data.error === "rate_limited") {
+        if (!(await rest(cfg, `opening ${lead.full_name || "a profile"}`))) return;
+        i--;
+        continue;
+      }
       done++;
 
       // The verdict is decided here, from the card fields plus whatever the lead page
@@ -781,6 +1110,7 @@ async function runEnrich(cfg, limit = 0) {
       const s = await state();
       const streak = data.ok ? 0 : s.stats.streak + 1;
       await setState({
+        ...(data.ok ? { rateHits: 0 } : {}),
         current: null,
         currentName: null,
         stats: { ...s.stats, streak,
@@ -915,9 +1245,12 @@ async function alertStop(reason) {
 async function clearRun() {
   if ((await state()).running) return { ok: false, error: "stop the run first" };
   await results.clearRun();
+  // The linked tab is a setting, not a result.
+  const { [LINKED]: linked } = await chrome.storage.session.get(LINKED);
   await chrome.storage.session.clear();
   await setState({
     stats: { streak: 0, lastError: "cleared" },
+    ...(linked !== undefined ? { [LINKED]: linked } : {}),
   });
   return { ok: true };
 }
@@ -939,6 +1272,8 @@ async function snapshot() {
              unsent: queued.length, downloads: toDownload.length,
              reallySent: sends.sent, dropped: sends.dropped },
     version: VERSION,
+    switchMissing: !!(await chrome.storage.local.get(SWITCH_MISSING))[SWITCH_MISSING],
+    profileTab: await linkInfo(),
     counts: run.counts,
     pending: run.pending.length,
     qualified: run.qualified.length,
@@ -970,7 +1305,7 @@ results.getRun().then(async (run) => {
 const MESSAGES = new Set(["STATE", "START", "STOP", "PAUSE", "RESUME", "CLEAR",
                           "AUTO_ON", "AUTO_OFF", "REGISTER", "RELAY_RESET", "DOWNLOAD", "LOG_TEXT", "WAKE",
                           "HISTORY_TEXT",
-                          "GET_FILTERS", "SET_FILTERS",
+                          "GET_FILTERS", "SET_FILTERS", "LINK_TAB", "UNLINK_TAB",
                           "GET_SETTINGS", "SET_SETTINGS", "TEST_TELEGRAM",
                           "PROGRESS"]);
 
@@ -1014,6 +1349,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse(await results.logText());
     } else if (msg.type === "GET_FILTERS") {
       sendResponse(await filters());
+    } else if (msg.type === "LINK_TAB") {
+      sendResponse(await linkTab(msg.tabId));
+    } else if (msg.type === "UNLINK_TAB") {
+      await chrome.storage.session.remove(LINKED);
+      results.noteEvent("Profile tab unlinked: profiles open in a window of their own again");
+      sendResponse({ ok: true });
     } else if (msg.type === "SET_FILTERS") {
       await chrome.storage.local.set({ filters: msg.filters });
       sendResponse(await filters());

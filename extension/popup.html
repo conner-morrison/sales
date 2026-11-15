@@ -56,7 +56,7 @@
   .gtitle label { display:inline-flex; align-items:center; gap:3px; cursor:pointer;
                   font-weight:600; color:var(--ink); }
   .gtitle input { margin:0; }
-  #fYears { width:46px; font:inherit; padding:1px 4px; border-radius:4px;
+  #fYears, #fMaxYears { width:46px; font:inherit; padding:1px 4px; border-radius:4px;
             border:1px solid var(--line); background:var(--bg); color:var(--ink); }
   .field { width:100%; font:inherit; padding:3px 5px; margin-top:2px; border-radius:4px;
            border:1px solid var(--line); background:var(--bg); color:var(--ink); }
@@ -72,6 +72,14 @@
     <span class="val" id="session"></span>
   </div>
 
+  <!-- Shown once a covered profile window has made the run wait: this Chrome was not
+       started with the setting that keeps covered windows working. -->
+  <div class="warn" id="setupNote" hidden>
+    This Chrome stops a covered window from working, so the run waits whenever the
+    profile window is covered. Fix it once on this computer: download the setup file,
+    open it, then close Chrome completely and open it again.
+    <button id="setupBtn" class="ghost">Download setup file</button>
+  </div>
   <hr>
   <div class="grid">
     <div class="row"><span class="muted">Captured</span><span id="captured">–</span></div>
@@ -96,8 +104,13 @@
   <hr>
   <!-- What a lead page must show to qualify. Saved as it is changed, and read for every
        profile, so a change applies from the next one on. -->
-  <div class="row"><span class="muted">Min. experience</span>
-    <span><input id="fYears" type="number" min="0" max="50" step="1"> yrs</span></div>
+  <!-- Minimum and maximum, both inclusive. An empty maximum is no maximum. -->
+  <div class="row"><span class="muted">Experience</span>
+    <span><input id="fYears" type="number" min="0" max="50" step="1" title="Minimum years">
+      –
+      <input id="fMaxYears" type="number" min="0" max="60" step="1" placeholder="any"
+             title="Maximum years - empty for no maximum"> yrs</span></div>
+  <div class="err" id="yearsWarn" hidden>The maximum is below the minimum, so it is ignored.</div>
   <!-- Each group passes on any one ticked box, or on every one with its AND ticked.
        Every group with something ticked must pass. -->
   <div class="ftitle gtitle">Tech stack
@@ -147,6 +160,18 @@
   <div class="btns">
     <button id="logBtn" class="ghost" disabled title="The last 50 profiles seen: URL, what was read, and why YES or NO">Download log.txt</button>
     <button id="histBtn" class="ghost" title="Every lead ever qualified, across all runs">Download history.txt</button>
+  </div>
+  <hr>
+  <!-- Where profiles are read: a tab the person linked, in a window of its own, or else a
+       window the extension opens. -->
+  <div class="conn">
+    <span class="dot" id="linkDot"></span>
+    <span class="lbl muted">Profile tab</span>
+    <span class="val" id="linkState">A new window</span>
+  </div>
+  <div class="btns">
+    <button id="linkBtn" class="ghost" title="Read profiles in the tab shown now. Keep it in a window apart from the search, and do not use it for anything else during a run.">Link this tab</button>
+    <button id="unlinkBtn" class="danger" hidden title="Go back to opening a window for profiles">Unlink</button>
   </div>
   <hr>
   <!-- Which copy this is. Sent with the registration, so it is fixed once registered:

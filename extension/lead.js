@@ -93,8 +93,32 @@ async function revealLazyContent(steps = 4, pauseMs) {
   await sleep(300);
 }
 
+/**
+ * Whether LinkedIn is saying the account sent too many requests. It says so in a toast,
+ * a banner, or in place of the page, worded several ways. Answered with a rest, never by
+ * pressing on: carrying on is what gets an account restricted.
+ *
+ * Only LinkedIn's own notices are read, and the page text only when the profile did not
+ * render: a profile or a card can say "rate limiting" or "too many requests" about
+ * someone's work, and that must not stop a run.
+ */
+const RATE_LIMIT = /too many requests|(making|sent|made) (a lot of|too many|many) requests|request limit|exceeded .{0,20}limit|try again (later|in a (few|little))|temporarily (restricted|limited|unavailable|blocked)/i;
+
+function rateLimited(hasContent) {
+  const notices = [...document.querySelectorAll(
+    '[role="alert"], [role="alertdialog"], .artdeco-toast-item, .artdeco-inline-feedback, ' +
+    '.artdeco-modal, .artdeco-empty-state, .search-results__no-results')]
+    .filter((el) => el.getClientRects().length)          // shown, not a hidden template
+    .map((el) => el.innerText || "").join(" ");
+  if (RATE_LIMIT.test(notices)) return true;
+  return !hasContent && RATE_LIMIT.test(document.body?.innerText || "");
+}
+
 function pageProblem() {
   const url = location.href;
+  if (rateLimited(!!document.querySelector('[data-anonymize="person-name"]'))) {
+    return "rate_limited";
+  }
   if (!/\/sales\/lead\//.test(url)) return `redirected_away [${url.slice(0, 80)}]`;
   const txt = (document.body?.innerText || "").slice(0, 2000);
   if (/sign in|join linkedin|session expired|log in to continue/i.test(txt)) {
@@ -607,6 +631,12 @@ async function extract() {
 }
 
 chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
+  // Whether this page is on the screen. Hidden -- minimized or covered completely -- it
+  // is not drawn, and the read would find nothing.
+  if (msg?.type === "VISIBILITY") {
+    sendResponse({ visible: document.visibilityState === "visible" });
+    return;
+  }
   if (msg?.type !== "READ_LEAD") return;
   (async () => {
     await waitForRender(msg.timeoutMs || 30000);
