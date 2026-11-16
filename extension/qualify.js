@@ -130,6 +130,11 @@ export function spellings(pack) {
  * still there to count -- though, being a spelling of a term already found, as nothing.
  */
 export function distinctTerms(text, pack) {
+  return [...termsFound(text, pack).values()];
+}
+
+/** The same, as a map from each term's place in the pack to the spelling found. */
+function termsFound(text, pack) {
   const all = termsOf(pack)
     .flatMap((term, i) => term.map((s) => [String(s), i]))
     .sort((a, b) => b[0].length - a[0].length);
@@ -141,7 +146,7 @@ export function distinctTerms(text, pack) {
     if (!found.has(i)) found.set(i, s);
     rest = rest.replace(re, " ");
   }
-  return [...found.values()];
+  return found;
 }
 
 /** Half-to-even, matching the original scorer this threshold was carried over from. */
@@ -202,10 +207,19 @@ export function softwareRole(title, rules, profile = null) {
   if (profile === null) return broad;
   if (matches(t, rules.software_context)) return broad;
   if (matches(profile, rules.software_profile_terms)) return broad;
-  for (const pack of Object.values(rules.stacks || {})) {
-    if (matches(profile, spellings(pack))) return broad;
-  }
+  if (matches(profile, stackSpellings(rules.stack_tiers))) return broad;
   return null;
+}
+
+/** Every spelling in every tier of every stack, sides included. */
+function stackSpellings(tiers) {
+  const out = [];
+  for (const t of Object.values(tiers || {})) {
+    if (!t || typeof t !== "object") continue;
+    for (const tier of ["title", "core", "weak"]) out.push(...spellings(t[tier]));
+    out.push(...stackSpellings({ front: t.front, back: t.back }));
+  }
+  return out;
 }
 
 /** All the text a profile has, lower-cased, for the "anywhere in the profile" checks. */
@@ -299,12 +313,30 @@ export function classify(prospect, rules, filters = {}, today = new Date()) {
     passed.push(`${(months / 12).toFixed(1)} years`);
   }
 
-  // Three groups of ticked checks. Inside a group any one passing is enough, unless the
+  // The person's one stack, the highest scored, must be one of those ticked.
+  const ticked = Object.keys(STACK_NAMES).filter((k) => f.stacks && f.stacks[k]);
+  if (ticked.length) {
+    const s = stackScores(prospect, q, today);
+    const board = Object.keys(STACK_NAMES)
+      .map((k) => `${STACK_NAMES[k]} ${fmtG(s.points[k])}`).join(", ");
+    if (!s.top.length) {
+      return verdict(false, `No tech stack (${board}; ` +
+        `${fmtG(s.min)} points needed)`, "no_tech_stack");
+    }
+    const names = s.top.map((k) => STACK_NAMES[k]).join(" and ");
+    const hit = s.top.find((k) => ticked.includes(k));
+    if (!hit) {
+      return verdict(false, `Tech stack is ${names}, not a ticked one (${board})`,
+                     "other_tech_stack");
+    }
+    passed.push(`${names} (${board}: ${s.words[hit].join(", ")})`);
+  }
+
+  // Two groups of ticked checks. Inside a group any one passing is enough, unless the
   // group's AND is ticked; the groups themselves must all pass. A group with nothing
   // ticked is not asked.
   const all = f.all || {};
   const groups = [
-    [stackChecks(text, q, f), all.stacks, "no_tech_stack"],
     [backgroundChecks(prospect, text, q, f), all.background, "no_background"],
     [degreeChecks(prospect, q, f), all.degrees, "no_degree"],
   ];
@@ -321,21 +353,124 @@ export function classify(prospect, rules, filters = {}, today = new Date()) {
   return verdict(true, passed.join("; "));
 }
 
+/**
+ * Every stack's score for this profile, and the stack with the highest -- two or three
+ * on a tie. `top` is empty when the best is under `min_points`.
+ *
+ * Words are read from two texts: the profile with the jobs that ended more than
+ * `old_years` years ago taken out, and those old jobs. A word found only in the old
+ * jobs counts `old_factor` of its worth. Full-stack counts only when it shows both
+ * sides: its own words, or frontend and backend words reaching `side_min` each.
+ *
+ * Weak words add to a score but cannot make one: a stack with no title or core word
+ * is never the person's stack, whatever its points.
+ */
+export function stackScores(prospect, rules, today = new Date()) {
+  const sc = { title: 3, core: 1, weak: 0.5, old_years: 5, old_factor: 0.5,
+               min_points: 2, side_min: 1, ...(rules.stack_scoring || {}) };
+  const ev = stackEvidence(prospect, sc.old_years, today);
+  const tiers = rules.stack_tiers || {};
+  const points = {};
+  const words = {};
+  const strong = {};
+  for (const k of Object.keys(STACK_NAMES)) {
+    const t = tiers[k] || {};
+    const own = tierScore(t, ev, sc);
+    points[k] = own.points;
+    words[k] = own.words;
+    strong[k] = own.strong;
+    if (k !== "fullstack") continue;
+    const front = tierScore(t.front || {}, ev, sc);
+    const back = tierScore(t.back || {}, ev, sc);
+    const both = own.points > 0 ||
+      (front.points >= sc.side_min && back.points >= sc.side_min);
+    points[k] = both ? own.points + front.points + back.points : 0;
+    words[k] = [...own.words, ...front.words.map((w) => `front ${w}`),
+                ...back.words.map((w) => `back ${w}`)];
+    strong[k] = own.strong || front.strong || back.strong;
+  }
+  const best = Math.max(0, ...Object.keys(points).filter((k) => strong[k]).map((k) => points[k]));
+  const top = best >= sc.min_points
+    ? Object.keys(points).filter((k) => strong[k] && Math.abs(points[k] - best) < 1e-9) : [];
+  return { points, words, top, min: sc.min_points };
+}
+
+/** One stack's (or one side's) points, and the words that earned them. */
+function tierScore(t, ev, sc) {
+  let points = 0;
+  let strong = false;
+  const words = [];
+  const title = matches(ev.titles, spellings(t.title));
+  const oldTitle = title ? null : matches(ev.oldTitles, spellings(t.title));
+  if (title) {
+    points += sc.title;
+    words.push(`title ${repr(title)}`);
+  } else if (oldTitle) {
+    points += sc.title * sc.old_factor;
+    words.push(`old title ${repr(oldTitle)}`);
+  }
+  if (title || oldTitle) strong = true;
+  for (const tier of ["core", "weak"]) {
+    const now = termsFound(ev.recent, t[tier]);
+    const old = termsFound(ev.old, t[tier]);
+    if (tier === "core" && (now.size || old.size)) strong = true;
+    for (const s of now.values()) {
+      points += sc[tier];
+      words.push(tier === "weak" ? `${repr(s)} weak` : repr(s));
+    }
+    for (const [i, s] of old) {
+      if (now.has(i)) continue;
+      points += sc[tier] * sc.old_factor;
+      words.push(`${repr(s)} old`);
+    }
+  }
+  return { points, words, strong };
+}
+
+/**
+ * The profile split by age: titles held now or in the last `oldYears` years, the
+ * titles before that, and the text of each. A job whose dates did not read counts as
+ * recent -- a missing date should not halve anyone's evidence.
+ */
+function stackEvidence(p, oldYears, today) {
+  const cutoff = today.getFullYear() - oldYears;
+  const titles = [clean(field(p, "title"))];
+  const old = [];
+  for (const r of rolesOf(p)) {
+    if (!r || typeof r !== "object") continue;
+    const end = roleEndYear(r.dates, today);
+    if (end === null || end >= cutoff) titles.push(clean(r.title));
+    else old.push(r);
+  }
+  // The old jobs come out of the recent text: their descriptions, and their titles
+  // unless a recent job carries the same one.
+  let recent = profileText(p);
+  const oldParts = [];
+  for (const r of old) {
+    const t = clean(r.title);
+    const d = clean(r.description);
+    if (d) recent = recent.split(d).join(" ");
+    if (t && !titles.includes(t)) recent = recent.split(t).join(" ");
+    oldParts.push(t, d);
+  }
+  return {
+    titles: titles.filter((t) => t && t !== UNKNOWN).join(" \n "),
+    oldTitles: old.map((r) => clean(r.title)).filter(Boolean).join(" \n "),
+    recent,
+    old: oldParts.filter(Boolean).join(" \n "),
+  };
+}
+
+/** The year a job ended: this year while it runs, null when its dates show no year. */
+function roleEndYear(dates, today) {
+  const text = String(dates ?? "");
+  if (/present|current|now/i.test(text)) return today.getFullYear();
+  const years = [...text.matchAll(/\b(19|20)\d{2}\b/g)].map((m) => Number(m[0]));
+  return years.length ? Math.max(...years) : null;
+}
+
 // Each of these returns one {hit, miss} per ticked box: `hit` names what was found, or
 // is null, and `miss` says what was missing.
-
-function stackChecks(text, q, f) {
-  return Object.keys(STACK_NAMES).filter((k) => f.stacks && f.stacks[k]).map((k) => {
-    const name = STACK_NAMES[k];
-    const need = (q.stack_min_terms || {})[k] || 1;
-    const found = distinctTerms(text, q.stacks[k]);
-    const list = found.map(repr).join(", ");
-    if (found.length >= need) return { hit: `${name}: ${list}` };
-    return { hit: null, miss: found.length
-      ? `${name}: only ${list}, ${need} different terms needed`
-      : `No ${name} terms in the profile` };
-  });
-}
 
 function backgroundChecks(prospect, text, q, f) {
   const checks = [];

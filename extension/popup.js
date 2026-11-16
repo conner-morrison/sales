@@ -259,11 +259,11 @@ const BOXES = {
   fMBA: ["degrees", "mba"],
   fSpeak: ["speaking"], fCompany: ["big_company"], fUni: ["big_university"],
   fG1: ["grouping", "1"], fG2: ["grouping", "2"], fG3: ["grouping", "3"],
-  aStack: ["all", "stacks"], aBack: ["all", "background"], aDeg: ["all", "degrees"],
+  aBack: ["all", "background"], aDeg: ["all", "degrees"],
 };
 
 // Beside each group's AND box: how the ticked boxes in it combine.
-const MODES = { aStack: "mStack", aBack: "mBack", aDeg: "mDeg" };
+const MODES = { aBack: "mBack", aDeg: "mDeg" };
 
 function showModes() {
   for (const [box, span] of Object.entries(MODES)) {

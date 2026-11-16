@@ -79,8 +79,8 @@ async function rules() {
 /**
  * The popup's filters: minimum years, and three groups of checks -- tech stack,
  * background, degrees -- plus grouping, the name screen prefilter.js runs on search
- * cards. `all` holds each group's AND box: off, any one ticked check in the group is
- * enough. Read for every lead, so a change in the popup applies from the next profile
+ * cards. `all` holds the AND box of background and degrees: off, any one ticked check
+ * in the group is enough. Tech stack has none: a person has one stack, the best scored. Read for every lead, so a change in the popup applies from the next profile
  * on (grouping: from the next search page).
  *
  * Grouping "1" starts ticked: it is the name screen every run had before the box
@@ -95,7 +95,7 @@ const DEFAULT_FILTERS = {
   big_university: false,
   degrees: { bs: false, ms: false, phd: false, mba: false },
   grouping: { 1: true, 2: false, 3: false },
-  all: { stacks: false, background: false, degrees: false },
+  all: { background: false, degrees: false },
 };
 
 async function filters() {

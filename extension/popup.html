@@ -111,11 +111,12 @@
       <input id="fMaxYears" type="number" min="0" max="60" step="1" placeholder="any"
              title="Maximum years - empty for no maximum"> yrs</span></div>
   <div class="err" id="yearsWarn" hidden>The maximum is below the minimum, so it is ignored.</div>
-  <!-- Each group passes on any one ticked box, or on every one with its AND ticked.
-       Every group with something ticked must pass. -->
-  <div class="ftitle gtitle">Tech stack
-    <label title="Every ticked box in this group must match"><input type="checkbox" id="aStack"> AND</label>
-    <span id="mStack"></span></div>
+  <!-- Every profile is scored for all three stacks; its highest is its one stack, and
+       that must be one of those ticked. -->
+  <div class="ftitle gtitle" title="The profile's highest-scored stack must be a ticked one">Tech stack
+    <span>(highest score)</span></div>
+  <!-- Background and Degree pass on any one ticked box, or on every one with the AND
+       ticked. Every group with something ticked must pass. -->
   <div class="checks">
     <label><input type="checkbox" id="fAI"> AI</label>
     <label><input type="checkbox" id="fFull"> Full-stack</label>

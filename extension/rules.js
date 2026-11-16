@@ -67,54 +67,121 @@ export const DEFAULT_RULES = {
   exclude_anywhere: ["cybersecurity", "cyber security", "cyber-security"],
 
   /**
-   * Tech-stack packs, one per checkbox. A pack passes on `stack_min_terms` different
-   * terms, one unless set there. An entry that is an array is one term spelled several
-   * ways: "AI" and "artificial intelligence" are not two pieces of evidence.
+   * Tech stacks: every profile is scored for all three, and the highest score is the
+   * person's stack. No single word decides it.
+   *
+   * Each stack's words come in three tiers:
+   *   title  found in the current job title or one held in the last `old_years` years.
+   *          Worth `title` points, once per stack however many title words match.
+   *   core   anywhere in the profile, `core` points each.
+   *   weak   anywhere in the profile, `weak` points each. Words two stacks share are weak
+   *          in both, so they never decide between them.
+   * A word met only in a job that ended more than `old_years` years ago counts
+   * `old_factor` of its worth. An entry that is an array is one word spelled several
+   * ways: "ML" and "machine learning" count once.
+   *
+   * Full-stack is backend AND frontend: it scores only when its own words show both
+   * ("full stack", MERN), or when the frontend and the backend words each reach
+   * `side_min` points.
    */
-  stacks: {
-    // No "transformers", "rag", "gpt" or "embeddings": each is as often something else
-    // -- power transformers, RAG status reports, partition tables, word embeddings in a
-    // linguistics thesis -- and one stray word was enough to pass.
-    ai: [
-      ["artificial intelligence", "ai"], ["machine learning", "ml"], "deep learning",
-      ["llm", "llms", "large language model", "large language models"],
-      ["generative ai", "genai", "gen ai"], ["nlp", "natural language processing"],
-      "computer vision", ["neural network", "neural networks"], "pytorch", "tensorflow",
-      "keras", ["hugging face", "huggingface"], "langchain", "llamaindex", "openai",
-      "chatgpt", "retrieval augmented generation", "prompt engineering", "mlops",
-      "reinforcement learning", ["scikit-learn", "sklearn"], "ai engineer",
-      "ml engineer", "vector database", ["fine-tuning", "fine tuning"],
-      "stable diffusion", "agentic", "ai agents",
-    ],
-    // No bare "react": in a profile it is as often the verb -- "react to incidents" --
-    // as the library, which is named here by its other spellings.
-    fullstack: [
-      ["full stack", "full-stack", "fullstack"], ["front end", "front-end", "frontend"],
-      ["back end", "back-end", "backend"], ["react.js", "reactjs"], ["next.js", "nextjs"],
-      ["angular", "angularjs"], ["vue", "vue.js", "vuejs"], "nuxt", "svelte",
-      "javascript", "typescript", ["node.js", "nodejs"], ["express.js", "expressjs"],
-      "nestjs", "django", "flask", "fastapi", "ruby on rails", "laravel", "php",
-      "spring boot", ["asp.net", ".net"], "graphql", ["rest api", "restful"], "html",
-      "css", "tailwind", "mongodb", "postgresql", "mysql",
-      ["web developer", "web development", "web applications"], "mern", "mean stack",
-      "redux",
-    ],
-    // No bare "analytics": marketing, web and people analytics are not data work.
-    data: [
-      ["data engineer", "data engineering"], ["data scientist", "data science"],
-      ["data analyst", "data analytics"], "big data", ["etl", "elt"],
-      ["data pipeline", "data pipelines"], ["data warehouse", "data warehousing"],
-      "data lake", "lakehouse", "data modeling", ["spark", "pyspark", "apache spark"],
-      "hadoop", "kafka", "airflow", "dbt", "snowflake", "databricks", "bigquery",
-      "redshift", "sql", "tableau", "power bi", "looker", "pandas", "numpy",
-      "statistics", ["business intelligence", "bi developer"], "data platform",
-    ],
+  stack_scoring: {
+    title: 3, core: 1, weak: 0.5, old_years: 5, old_factor: 0.5, min_points: 2,
+    side_min: 1,
   },
 
-  /** Different terms a pack needs to pass. Each of these words turns up as a passing
-   *  mention -- a course, one old project, a skills list padded out -- so one says
-   *  little; two different ones say the person works with it. */
-  stack_min_terms: { ai: 2, fullstack: 2, data: 2 },
+  stack_tiers: {
+    // No "transformers", "rag", "gpt" or "embeddings": each is as often something else
+    // -- power transformers, RAG status reports, partition tables, word embeddings in a
+    // linguistics thesis. Mentions of AI itself are weak: anyone can write "AI" in an
+    // About; the tools and methods are what show the work.
+    ai: {
+      title: [
+        "ml engineer", "machine learning engineer", "ai engineer", "deep learning engineer",
+        "nlp engineer", "computer vision engineer", "mlops engineer", "llm engineer",
+        "applied scientist", "ai researcher", "ml researcher", "machine learning researcher",
+        "ai scientist", "machine learning scientist",
+      ],
+      core: [
+        "pytorch", "tensorflow", "keras", "jax", "deep learning",
+        ["neural network", "neural networks"], "computer vision",
+        ["nlp", "natural language processing"],
+        ["llm", "llms", "large language model", "large language models"],
+        ["fine-tuning", "fine tuning", "finetuning"],
+        ["retrieval augmented generation", "retrieval-augmented generation"],
+        "langchain", "llamaindex", ["hugging face", "huggingface"], "mlops", "mlflow",
+        "kubeflow", "sagemaker", "vertex ai", "reinforcement learning", "model training",
+        ["vector database", "vector databases"], "xgboost", "stable diffusion",
+      ],
+      weak: [
+        ["artificial intelligence", "ai"], ["machine learning", "ml"],
+        ["generative ai", "genai", "gen ai"], "chatgpt", "openai", "prompt engineering",
+        "agentic", ["ai agents", "ai agent"], ["scikit-learn", "sklearn"],
+        "pandas", "numpy", "statistics",
+      ],
+    },
+    // Engineering and science, not reporting: SQL and the BI tools alone are an
+    // analyst's, and are weak. No bare "analytics": marketing, web and people analytics
+    // are not data work.
+    data: {
+      title: [
+        "data engineer", "analytics engineer", "etl developer", "etl engineer",
+        "data architect", "data platform engineer", "data warehouse engineer",
+        "data warehouse developer", "data scientist",
+      ],
+      core: [
+        ["spark", "pyspark", "apache spark"], "airflow", "dbt", "snowflake", "databricks",
+        "bigquery", "redshift", "hadoop", "hive", "flink", "kafka", "aws glue",
+        ["azure synapse", "synapse analytics"], ["azure data factory", "data factory"],
+        "delta lake", ["etl", "elt"], ["data pipeline", "data pipelines"],
+        ["data warehouse", "data warehousing"], ["data lake", "data lakes"], "lakehouse",
+        ["data modeling", "data modelling"], "data engineering", "data science",
+        "big data", "data platform",
+      ],
+      weak: [
+        "sql", "tableau", "power bi", "looker", "excel", "pandas", "numpy", "statistics",
+        "business intelligence", ["data analyst", "data analytics", "data analysis"],
+      ],
+    },
+    // Its own words say both sides at once; `front` and `back` say one side each.
+    // No bare "react": in a profile it is as often the verb -- "react to incidents" --
+    // as the library, which is named here by its other spellings. No bare "go" either.
+    fullstack: {
+      title: ["full stack", "full-stack", "fullstack"],
+      core: [["full stack", "full-stack", "fullstack"], "mern", "mean stack"],
+      weak: [],
+      front: {
+        title: [
+          "frontend", "front end", "front-end", "ui engineer", "ui developer",
+          "react developer", "angular developer", "javascript developer",
+        ],
+        core: [
+          ["react.js", "reactjs"], ["next.js", "nextjs"], ["angular", "angularjs"],
+          ["vue", "vue.js", "vuejs"], "nuxt", "svelte", "typescript", "redux", "tailwind",
+          ["front end", "front-end", "frontend"],
+        ],
+        weak: [
+          "javascript", "html", "css",
+          ["web developer", "web development", "web applications"],
+        ],
+      },
+      back: {
+        title: [
+          "backend", "back end", "back-end", "java developer", ".net developer",
+          "php developer", "node.js developer", "python developer",
+        ],
+        core: [
+          ["node.js", "nodejs"], ["express.js", "expressjs"], "nestjs", "django", "flask",
+          "fastapi", "ruby on rails", "laravel", "spring boot", ["asp.net", ".net"],
+          "graphql", ["rest api", "rest apis", "restful"], "microservices", "php",
+          ["back end", "back-end", "backend"],
+        ],
+        weak: [
+          "java", "c#", "golang", "sql", "postgresql", "mysql", "mongodb", "redis",
+          "kafka", "docker",
+        ],
+      },
+    },
+  },
 
   /** "Speaking": people whose work involves talking to an audience. */
   speaking: [
